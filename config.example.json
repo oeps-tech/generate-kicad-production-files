@@ -1,0 +1,22 @@
+{
+    "spreadsheetCsvUrl":  "https://docs.google.com/spreadsheets/d/1c0Wh_HY_bz6y2l1Jr0D6rPmvKgyRPSEPphRE5ZAqndk/gviz/tq?tqx=out:csv\u0026sheet=components%20list\u0026headers=0\u0026tq=select%20A%2CB%2CD%20where%20B%20is%20not%20null%20and%20D%20is%20not%20null%20label%20A%20%27Description%27%2C%20B%20%27OEPS_PN%27%2C%20D%20%27MPN%27",
+    "headerAliases":  {
+                          "oepsPn":  [
+                                         "OEPS_PN",
+                                         "OEPS PN"
+                                     ],
+                          "mpn":  [
+                                      "MPN"
+                                  ],
+                          "description":  [
+                                              "Description"
+                                          ],
+                          "manufacturer":  [
+                                               "Manufacturer"
+                                           ]
+                      },
+    "sampleMode":  false,
+    "gitHubOwner":  "oeps-tech",
+    "gitHubRepository":  "generate-kicad-production-files",
+    "packagePrefix":  "Oeps.KicadProductionFiles"
+}

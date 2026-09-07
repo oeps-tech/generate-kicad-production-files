@@ -1,0 +1,5 @@
+OEPS_PN,MPN,Manufacturer,Description
+OEPS101234,ABM8AIG-12.000MHZ-12-2Z-T3,Abracon,SAMPLE ONLY - crystal
+OEPS101234,ALTERNATE-MPN,Example,SAMPLE ONLY - alternate pairing
+OEPS-AB1234,ABC-123,Example,SAMPLE ONLY - letters
+OEPS-0012,00001234,Example,SAMPLE ONLY - leading zeros

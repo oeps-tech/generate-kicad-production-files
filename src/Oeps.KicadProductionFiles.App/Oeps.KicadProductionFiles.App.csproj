@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <RollForward>LatestPatch</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../assets/app.ico" LogicalName="Oeps.AppIcon" />
+    <ProjectReference Include="../Oeps.KicadProductionFiles.Core/Oeps.KicadProductionFiles.Core.csproj" />
+    <Content Include="../../appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../samples/components.csv" Link="samples/components.csv" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <Content Include="../../samples/configured-project.kicad_pro" Link="samples/configured-project.kicad_pro" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <Content Include="../../samples/configured-project.kicad_sch" Link="samples/configured-project.kicad_sch" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <Content Include="../../samples/placement-test.kicad_pcb" Link="samples/placement-test.kicad_pcb" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+</Project>

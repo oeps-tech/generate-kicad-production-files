@@ -1,0 +1,11 @@
+(kicad_sch
+  (version 20260306)
+  (generator "eeschema")
+  (uuid "6339f898-0b6a-4a79-bb28-97532bbca220")
+  (paper "A4")
+  (title_block
+    (title "Configuration test project")
+    (rev "B")
+  )
+  (lib_symbols)
+)

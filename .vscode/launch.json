@@ -1,0 +1,6 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "OEPS KiCad Production Files", "type": "coreclr", "request": "launch", "preLaunchTask": "build", "program": "${workspaceFolder}/src/Oeps.KicadProductionFiles.App/bin/Debug/net10.0-windows/Oeps.KicadProductionFiles.App.dll", "cwd": "${workspaceFolder}", "args": [] }
+  ]
+}

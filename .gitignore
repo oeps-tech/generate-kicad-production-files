@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+.tools/
+artifacts/
+.vs/
+*.user
+*.suo
+.local/
+**/.oeps-backups/
+/kicad reference/
+/kicad to work on/
+*.kicad_prl
