@@ -2,7 +2,7 @@ using System.Text;
 
 namespace Oeps.KicadProductionFiles.Core.Kicad;
 
-/// <summary>Reads and edits setup/pcbplotparams while retaining the rest of the PCB text exactly.</summary>
+/// <summary>Reads plot settings, silkscreen text and component fields; edits only setup/pcbplotparams.</summary>
 public sealed class PcbPlotSettingsDocument
 {
     private readonly string _text;
@@ -29,8 +29,70 @@ public sealed class PcbPlotSettingsDocument
         if (node is null) return null;
         if (node.Children.Count != 0 || node.Values.Count != 1 || node.Values[0].Kind != (quoted ? 's' : 'a'))
             throw new InvalidDataException($"{key} must contain one {(quoted ? "quoted string" : "unquoted value")}.");
-        var value = node.Values[0].Value;
-        if (!quoted) return value;
+        return Decode(node.Values[0]);
+    }
+
+    /// <summary>Reads visible literal board/footprint text on either silkscreen layer, excluding metadata.</summary>
+    public IEnumerable<string> ReadSilkscreenTexts()
+    {
+        var candidates = _root.Children.Where(node => node.Name is "gr_text" or "gr_text_box")
+            .Concat(_root.Children.Where(node => node.Name == "footprint")
+                .SelectMany(node => node.Children.Where(child => child.Name is "fp_text" or "fp_text_box" or "property")));
+        foreach (var node in candidates)
+        {
+            var layer = SingleChild(node, "layer");
+            if (layer is null || layer.Values.Count == 0 || Decode(layer.Values[0]) is not ("F.SilkS" or "B.SilkS")) continue;
+            if (Hidden(node) || node.Children.Any(child => child.Name == "effects" && Hidden(child))) continue;
+            var values = node.Values.Where(value => value.Kind == 's').ToArray();
+            var index = node.Name == "property" ? 1 : 0;
+            if (values.Length > index) yield return Decode(values[index]);
+        }
+    }
+
+    /// <summary>Reads footprint identifiers, including hidden properties. Board text and pads are not component fields.</summary>
+    public IReadOnlyList<ComponentFields> ReadFootprintFields()
+    {
+        var components = new List<ComponentFields>();
+        foreach (var footprint in _root.Children.Where(node => node.Name == "footprint"))
+        {
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+            var issues = new List<string>();
+            foreach (var property in footprint.Children.Where(node => node.Name == "property"))
+            {
+                if (property.Values.Count == 0)
+                { issues.Add("Malformed footprint property."); continue; }
+                // KiCad also stores unquoted metadata keys here (for example ki_fp_filters).
+                var name = Decode(property.Values[0]);
+                if (name is not ("Reference" or "OEPS PN" or "OEPSPN" or "MPN" or "OEPS Description")) continue;
+                if (property.Values.Count != 2 || property.Values[1].Kind != 's')
+                { issues.Add($"Malformed {name} property."); continue; }
+                if (!fields.TryAdd(name, Decode(property.Values[1]))) issues.Add($"Duplicate {name} property.");
+            }
+            // Older boards store Reference as fp_text rather than a property.
+            var legacy = footprint.Children.Where(node => node.Name == "fp_text" && node.Values.Count > 0
+                && node.Values[0].Kind == 'a' && node.Values[0].Value == "reference").ToArray();
+            if (legacy.Length > 1) issues.Add("Duplicate reference text.");
+            foreach (var reference in legacy)
+            {
+                if (reference.Values.Count < 2 || reference.Values[1].Kind != 's')
+                { issues.Add("Malformed reference text."); continue; }
+                var value = Decode(reference.Values[1]);
+                if (fields.TryGetValue("Reference", out var saved) && saved.Trim() != value.Trim())
+                    issues.Add("Reference property and reference text disagree.");
+                else fields["Reference"] = value;
+            }
+            components.Add(new(fields.GetValueOrDefault("Reference", "").Trim(), fields.AsReadOnly(), issues.AsReadOnly()));
+        }
+        return components.AsReadOnly();
+    }
+
+    private static bool Hidden(Node node) => node.Values.Any(value => value.Kind == 'a' && value.Value == "hide")
+        || node.Children.Any(child => child.Name == "hide" && (child.Values.Count == 0 || child.Values[0].Value != "no"));
+
+    private static string Decode(Token token)
+    {
+        var value = token.Value;
+        if (token.Kind != 's') return value;
         var decoded = new StringBuilder();
         for (var index = 1; index < value.Length - 1; index++)
         {
@@ -121,7 +183,8 @@ public sealed class PcbPlotSettingsDocument
                 if (token.Kind == 'e') throw new InvalidDataException("The PCB has an unclosed list.");
                 if (token.Kind == '(')
                 {
-                    var child = ReadNode(depth + 1, capture && (depth == 0 || name.Value is "setup" or "pcbplotparams"), token.Start);
+                    var child = ReadNode(depth + 1, capture && (depth == 0 || name.Value is "setup" or "pcbplotparams"
+                        or "footprint" or "gr_text" or "gr_text_box" or "fp_text" or "fp_text_box" or "property" or "effects"), token.Start);
                     if (capture) node.Children.Add(child);
                 }
                 else if (capture) node.Values.Add(token);

@@ -1,4 +1,6 @@
 using Oeps.KicadProductionFiles.Core.Checks;
+using Oeps.KicadProductionFiles.Core.CheckProductionFiles;
+using Oeps.KicadProductionFiles.Core.Data;
 using Oeps.KicadProductionFiles.Core.Kicad;
 
 namespace Oeps.KicadProductionFiles.Core.GenerateProductionFiles;
@@ -9,11 +11,16 @@ public sealed class ProductionGenerationRunner(ICliCommandRunner? cli = null, IE
     private readonly IReadOnlyList<IProductionFileGenerator>? _generators = generators?.ToArray();
 
     public async Task<ProductionGenerationReport> RunAsync(CheckContext input, IProgress<string>? progress = null,
-        CancellationToken cancellationToken = default, ProductionGenerationOptions? options = null)
+        CancellationToken cancellationToken = default, ProductionGenerationOptions? options = null,
+        IReadOnlyList<Component>? database = null)
     {
         var files = new List<GeneratedProductionFile>();
+        var checks = new List<CheckResult>();
+        // One stable database snapshot for the entire run, even if the five-minute refresh completes meanwhile.
+        var databaseSnapshot = database?.ToArray() ?? [];
         var cleared = false;
         var cleanupStarted = false;
+        BomPlacementComparison? comparison = null;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -37,9 +44,20 @@ public sealed class ProductionGenerationRunner(ICliCommandRunner? cli = null, IE
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 progress?.Report("Generating " + generator.Name.ToLowerInvariant() + "…");
-                files.Add(await generator.GenerateAsync(context, _cli, cancellationToken).ConfigureAwait(false));
+                var generated = await generator.GenerateAsync(context, _cli, cancellationToken).ConfigureAwait(false);
+                files.Add(generated);
+                if (generated.Bom is { } bomData)
+                {
+                    progress?.Report("Checking required BOM fields, database values and BOM/layout consistency…");
+                    checks.Add(new BomIdentifiersCheck().Run(bomData, cancellationToken));
+                    checks.Add(new BomDatabaseIdentifiersCheck().Run(bomData, databaseSnapshot, cancellationToken));
+                    checks.Add(await new BomLayoutIdentifiersCheck().RunAsync(bomData, context.ProjectDirectory, cancellationToken).ConfigureAwait(false));
+                }
+                var bom = files.SingleOrDefault(file => file.Name == "BOM");
+                var placement = files.SingleOrDefault(file => file.Name == "Placement files");
+                if (bom is not null && placement is not null) comparison = BomPlacementComparison.Compare(bom, placement);
             }
-            return new(files.AsReadOnly(), cleared, null);
+            return new(files.AsReadOnly(), cleared, null) { Comparison = comparison, Checks = checks.AsReadOnly() };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or NotSupportedException or InvalidOperationException)
@@ -48,13 +66,13 @@ public sealed class ProductionGenerationRunner(ICliCommandRunner? cli = null, IE
             if (cleared) detail += "\nPrevious manufacturing files were cleared before generation.";
             else if (cleanupStarted) detail += "\nManufacturing cleanup did not finish; check its contents before retrying.";
             else detail += "\nManufacturing was not cleared.";
-            return new(files.AsReadOnly(), cleared, detail);
+            return new(files.AsReadOnly(), cleared, detail) { Comparison = comparison, Checks = checks.AsReadOnly() };
         }
     }
 
     private static IReadOnlyList<IProductionFileGenerator> SelectGenerators(ProductionGenerationOptions options)
     {
-        var selected = new List<IProductionFileGenerator>();
+        var selected = new List<IProductionFileGenerator> { new BomFilesGenerator() };
         if (options.GenerateGerbers) selected.Add(new GerberFilesGenerator());
         if (options.GeneratePlacements) selected.Add(new PlacementFilesGenerator());
         if (options.GenerateDrills) selected.Add(new DrillFilesGenerator());

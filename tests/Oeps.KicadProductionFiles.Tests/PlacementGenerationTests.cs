@@ -12,7 +12,7 @@ public static class PlacementGenerationTests
     {
         using var fixture = new Fixture();
         var cli = new FakeCli();
-        var report = await new ProductionGenerationRunner(cli).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+        var report = await PlacementRunner(cli).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
         Assert.True(report.Success, report.Error);
         Assert.True(report.ManufacturingCleared);
         Assert.Equal(2, cli.Calls.Count);
@@ -38,7 +38,7 @@ public static class PlacementGenerationTests
         await File.WriteAllTextAsync(outside, "keep");
         var board = await File.ReadAllBytesAsync(fixture.Board);
         var cli = new FakeCli { BeforeExport = _ => Assert.False(File.Exists(obsolete)) };
-        var report = await new ProductionGenerationRunner(cli).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+        var report = await PlacementRunner(cli).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
         Assert.True(report.Success, report.Error);
         Assert.False(Directory.Exists(Path.GetDirectoryName(obsolete)));
         Assert.Equal("keep", await File.ReadAllTextAsync(outside));
@@ -55,7 +55,7 @@ public static class PlacementGenerationTests
         foreach (var context in new[] { fixture.Context with { KicadCliPath = "" }, fixture.Context with { ProjectDirectory = "" } })
         {
             var cli = new FakeCli();
-            var report = await new ProductionGenerationRunner(cli).RunAsync(context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+            var report = await PlacementRunner(cli).RunAsync(context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
             Assert.False(report.Success);
             Assert.False(report.ManufacturingCleared);
             Assert.True(File.Exists(obsolete));
@@ -63,7 +63,7 @@ public static class PlacementGenerationTests
         }
         foreach (var help in new[] { new CliCommandResult(1, "", "unknown export"), new CliCommandResult(0, "--format --units --side", "") })
         {
-            var report = await new ProductionGenerationRunner(new FakeCli { Help = help }).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+            var report = await PlacementRunner(new FakeCli { Help = help }).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
             Assert.False(report.Success);
             Assert.False(report.ManufacturingCleared);
             Assert.True(File.Exists(obsolete));
@@ -77,12 +77,12 @@ public static class PlacementGenerationTests
         var obsolete = fixture.AddObsolete();
         var alternative = Path.Combine(fixture.DirectoryPath, "other.kicad_pcb");
         File.Move(fixture.Board, alternative);
-        var report = await new ProductionGenerationRunner(new FakeCli()).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+        var report = await PlacementRunner(new FakeCli()).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
         Assert.False(report.Success);
         Assert.True(File.Exists(obsolete));
         File.Move(alternative, fixture.Board);
         await File.WriteAllTextAsync(Path.Combine(fixture.DirectoryPath, "other.kicad_pro"), "{}");
-        report = await new ProductionGenerationRunner(new FakeCli()).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+        report = await PlacementRunner(new FakeCli()).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
         Assert.False(report.Success);
         Assert.True(File.Exists(obsolete));
     }
@@ -94,7 +94,7 @@ public static class PlacementGenerationTests
         {
             using var fixture = new Fixture();
             var obsolete = fixture.AddObsolete();
-            var report = await new ProductionGenerationRunner(new FakeCli { Mode = mode }).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+            var report = await PlacementRunner(new FakeCli { Mode = mode }).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
             Assert.False(report.Success);
             Assert.True(report.ManufacturingCleared);
             Assert.True(report.Error!.Contains("Previous manufacturing files were cleared"));
@@ -111,11 +111,11 @@ public static class PlacementGenerationTests
         var obsolete = fixture.AddObsolete();
         using var before = new CancellationTokenSource();
         before.Cancel();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => new ProductionGenerationRunner(new FakeCli()).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false), cancellationToken: before.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => PlacementRunner(new FakeCli()).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false), cancellationToken: before.Token));
         Assert.True(File.Exists(obsolete));
         using var during = new CancellationTokenSource();
         var cli = new FakeCli { BeforeExport = output => { File.WriteAllText(output, "partial"); during.Cancel(); } };
-        await Assert.ThrowsAsync<OperationCanceledException>(() => new ProductionGenerationRunner(cli).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false), cancellationToken: during.Token));
+        await Assert.ThrowsAsync<OperationCanceledException>(() => PlacementRunner(cli).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false), cancellationToken: during.Token));
         Assert.False(File.Exists(fixture.Output));
     }
 
@@ -138,7 +138,7 @@ public static class PlacementGenerationTests
             Assert.Equal(0, process.ExitCode);
             try
             {
-                var report = await new ProductionGenerationRunner(new FakeCli()).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+                var report = await PlacementRunner(new FakeCli()).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
                 Assert.False(report.Success);
                 Assert.True(File.Exists(protectedFile));
                 if (obsolete is not null) Assert.True(File.Exists(obsolete));
@@ -157,7 +157,7 @@ public static class PlacementGenerationTests
         File.SetAttributes(obsolete, FileAttributes.ReadOnly);
         try
         {
-            var report = await new ProductionGenerationRunner(cli).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
+            var report = await PlacementRunner(cli).RunAsync(fixture.Context, options: new(GenerateGerbers: false, GenerateDrills: false, GenerateIpcD356: false));
             Assert.False(report.Success);
             Assert.False(report.ManufacturingCleared);
             Assert.Equal(1, cli.Calls.Count);
@@ -165,6 +165,8 @@ public static class PlacementGenerationTests
         }
         finally { File.SetAttributes(obsolete, FileAttributes.Normal); }
     }
+
+    private static ProductionGenerationRunner PlacementRunner(ICliCommandRunner cli) => new(cli, [new PlacementFilesGenerator()]);
 
     private sealed class FakeCli : ICliCommandRunner
     {

@@ -7,6 +7,6 @@ public sealed class BomPositionCountCheck : IFileCheck
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(new CheckResult(Name, CheckStatus.Pending,
-            "Not implemented yet. BOM and position file formats, component quantity rules and exclusions will be configured in the next stage."));
+            "Generate production files with placement export selected to compare the newly generated BOM and placement component counts and references."));
     }
 }

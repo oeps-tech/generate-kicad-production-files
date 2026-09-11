@@ -14,7 +14,7 @@ public static class ProductionGenerationTests
     }
 
     [Test]
-    public static async Task EverySelectionRunsOnlyItsGeneratorsAndNoSelectionNeverDeletes()
+    public static async Task EverySelectionAlwaysGeneratesBomFirstThenOnlySelectedExports()
     {
         for (var flags = 0; flags < 16; flags++)
         {
@@ -24,10 +24,10 @@ public static class ProductionGenerationTests
             var options = new ProductionGenerationOptions(GenerateGerbers: (flags & 1) != 0,
                 GeneratePlacements: (flags & 2) != 0, GenerateDrills: (flags & 4) != 0, GenerateIpcD356: (flags & 8) != 0);
             var report = await new ProductionGenerationRunner(cli).RunAsync(fixture.Context, options: options);
-            Assert.Equal(flags != 0, report.Success);
-            Assert.Equal(flags != 0, report.ManufacturingCleared);
-            Assert.Equal(flags == 0, File.Exists(keep));
-            var expected = new List<string>();
+            Assert.True(report.Success, report.Error);
+            Assert.True(report.ManufacturingCleared);
+            Assert.False(File.Exists(keep));
+            var expected = new List<string> { "bom" };
             if (options.GenerateGerbers) expected.Add("gerbers");
             if (options.GeneratePlacements) expected.Add("pos");
             if (options.GenerateDrills) expected.Add("drill");
@@ -36,6 +36,8 @@ public static class ProductionGenerationTests
             Assert.True(expected.SequenceEqual(cli.Calls.Where(args => !args.Contains("--help")).Select(args => args[2])));
             Assert.True(cli.Calls.Take(expected.Count).All(args => args.Contains("--help")));
             Assert.Equal(expected.Count, report.Files.Count);
+            Assert.Equal(options.GeneratePlacements, report.Comparison is not null);
+            if (report.Comparison is { } comparison) Assert.True(comparison.Matches);
             foreach (var file in report.Files.SelectMany(group => group.RelativePaths))
                 Assert.True(File.Exists(Path.Combine(fixture.DirectoryPath, file)));
         }
@@ -88,9 +90,9 @@ public static class ProductionGenerationTests
             var cli = new FakeCli();
             var report = await new ProductionGenerationRunner(cli).RunAsync(fixture.Context, options: Only("gerbers"));
             Assert.True(report.Success, report.Error);
-            var args = cli.Calls.Single(args => !args.Contains("--help"));
+            var args = cli.Calls.Single(args => args[2] == "gerbers" && !args.Contains("--help"));
             Assert.True(args.SequenceEqual(new[] { "pcb", "export", "gerbers", "--board-plot-params", "--check-zones", "--output", Value(args, "--output"), fixture.Board }));
-            Assert.Equal(includeJob ? 3 : 2, report.Files.Single().RelativePaths.Count);
+            Assert.Equal(includeJob ? 3 : 2, report.Files.Single(file => file.Name == "Gerber files").RelativePaths.Count);
             Assert.Equal(includeJob, File.Exists(Path.Combine(fixture.Manufacturing, "gerber", "my board-job.gbrjob")));
         }
     }
@@ -102,13 +104,13 @@ public static class ProductionGenerationTests
         var cli = new FakeCli();
         var report = await new ProductionGenerationRunner(cli).RunAsync(fixture.Context, options: Only("drill"));
         Assert.True(report.Success, report.Error);
-        var args = cli.Calls.Single(args => !args.Contains("--help"));
+        var args = cli.Calls.Single(args => args[2] == "drill" && !args.Contains("--help"));
         Assert.True(args.SequenceEqual(new[] { "pcb", "export", "drill", "--output", Value(args, "--output"),
             "--format", "excellon", "--drill-origin", "plot", "--excellon-zeros-format", "decimal", "--excellon-oval-format", "route",
             "--excellon-units", "in", "--excellon-separate-th", "--generate-map", "--map-format", "gerberx2", fixture.Board }));
         Assert.False(args.Any(arg => arg is "--excellon-mirror-y" or "--excellon-min-header" or "--generate-tenting"));
-        Assert.Equal(4, report.Files.Single().RelativePaths.Count);
-        Assert.True(report.Files.Single().RelativePaths.All(path => path.StartsWith(Path.Combine("manufacturing", "gerber"))));
+        Assert.Equal(4, report.Files.Single(file => file.Name == "Drill files").RelativePaths.Count);
+        Assert.True(report.Files.Single(file => file.Name == "Drill files").RelativePaths.All(path => path.StartsWith(Path.Combine("manufacturing", "gerber"))));
     }
 
     [Test]
@@ -123,10 +125,10 @@ public static class ProductionGenerationTests
             var report = await new ProductionGenerationRunner(new FakeCli { Mode = mode }).RunAsync(fixture.Context,
                 options: Only(command) with { DeleteExistingFiles = false });
             Assert.False(report.Success, command + " " + mode);
-            Assert.Equal(0, report.Files.Count);
+            Assert.Equal("BOM", report.Files.Single().Name);
             Assert.False(report.ManufacturingCleared);
             Assert.Equal("previous", await File.ReadAllTextAsync(previous));
-            Assert.Equal(1, Directory.GetFiles(fixture.Manufacturing, "*", SearchOption.AllDirectories).Length);
+            Assert.Equal(2, Directory.GetFiles(fixture.Manufacturing, "*", SearchOption.AllDirectories).Length);
         }
     }
 
@@ -138,8 +140,8 @@ public static class ProductionGenerationTests
             using var fixture = new Fixture();
             var report = await new ProductionGenerationRunner(new FakeCli { Mode = mode }).RunAsync(fixture.Context, options: Only("drill"));
             Assert.False(report.Success, mode);
-            Assert.Equal(0, report.Files.Count);
-            Assert.Equal(0, Directory.GetFiles(fixture.Manufacturing, "*", SearchOption.AllDirectories).Length);
+            Assert.Equal("BOM", report.Files.Single().Name);
+            Assert.Equal(1, Directory.GetFiles(fixture.Manufacturing, "*", SearchOption.AllDirectories).Length);
         }
     }
 
@@ -155,7 +157,7 @@ public static class ProductionGenerationTests
             await Assert.ThrowsAsync<OperationCanceledException>(() => new ProductionGenerationRunner(cli).RunAsync(fixture.Context,
                 cancellationToken: cancellation.Token, options: Only(command) with { DeleteExistingFiles = false }));
             Assert.Equal("keep", await File.ReadAllTextAsync(keep));
-            Assert.Equal(1, Directory.GetFiles(fixture.Manufacturing, "*", SearchOption.AllDirectories).Length);
+            Assert.Equal(2, Directory.GetFiles(fixture.Manufacturing, "*", SearchOption.AllDirectories).Length);
         }
     }
 
@@ -178,11 +180,10 @@ public static class ProductionGenerationTests
         var cli = new FakeCli();
         var report = await new ProductionGenerationRunner(cli).RunAsync(fixture.Context, options: Only("ipcd356"));
         Assert.True(report.Success, report.Error);
-        var args = cli.Calls.Single(args => !args.Contains("--help"));
+        var args = cli.Calls.Single(args => args[2] == "ipcd356" && !args.Contains("--help"));
         Assert.True(args.SequenceEqual(new[] { "pcb", "export", "ipcd356", "--output", Value(args, "--output"), fixture.Board }));
         Assert.Equal("my board.d356", Path.GetFileName(Value(args, "--output")));
-        Assert.Equal("IPC-D-356 netlist", report.Files.Single().Name);
-        Assert.Equal(Path.Combine("manufacturing", "my board.d356"), report.Files.Single().RelativePath);
+        Assert.Equal(Path.Combine("manufacturing", "my board.d356"), report.Files.Single(file => file.Name == "IPC-D-356 netlist").RelativePath);
         Assert.True(File.Exists(Path.Combine(fixture.Manufacturing, "my board.d356")));
     }
 
@@ -217,11 +218,17 @@ public static class ProductionGenerationTests
             Calls.Add(args);
             var command = args[2];
             if (args.Contains("--help")) return new(0, command == Unsupported ? "" :
+                command == "bom" ? BomGenerationTests.Help :
                 "--format --units --side --use-drill-file-origin --output --board-plot-params --check-zones --drill-origin " +
                 "--excellon-zeros-format --excellon-oval-format --excellon-units --excellon-separate-th --generate-map --map-format", "");
             var output = Value(args, "--output");
             var stem = Path.GetFileNameWithoutExtension(args[^1]);
             var files = new Dictionary<string, string>();
+            if (command == "bom")
+            {
+                await File.WriteAllTextAsync(output, "Refs,Qty,Value\nR1,1,10k\n", cancellationToken);
+                return new(0, "", "");
+            }
             if (command == "ipcd356") files[output] = "P  CODE 00\nP  UNITS CUST 0\n999\n";
             if (command == "pos") files[output] = "Ref,Val,Package,PosX,PosY,Rot,Side\nR1,10k,0402,1,2,0,top\n";
             if (command == "gerbers")
@@ -259,7 +266,8 @@ public static class ProductionGenerationTests
         {
             Directory.CreateDirectory(DirectoryPath);
             File.WriteAllText(Board, GerberPlotSettingsTests.GoodBoard);
-            File.WriteAllText(Path.ChangeExtension(Board, ".kicad_pro"), "{}");
+            File.WriteAllText(Path.ChangeExtension(Board, ".kicad_pro"), BomGenerationTests.ProjectJson);
+            File.WriteAllText(Path.ChangeExtension(Board, ".kicad_sch"), "(kicad_sch)");
             File.WriteAllText(Context.KicadCliPath, "fake CLI for tests");
         }
         public string WriteExisting(string relative, string text)

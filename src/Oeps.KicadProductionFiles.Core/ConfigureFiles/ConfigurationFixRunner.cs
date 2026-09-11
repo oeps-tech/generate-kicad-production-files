@@ -15,8 +15,13 @@ public sealed record ConfigurationFixReport(CheckReport Checks, IReadOnlyList<Fi
 public sealed class ConfigurationFixRunner
 {
     private readonly IReadOnlyList<IConfigurationFix>? _fixes;
+    private readonly ConfigurationCheckRunner _checks;
 
-    public ConfigurationFixRunner(IEnumerable<IConfigurationFix>? fixes = null) => _fixes = fixes?.ToArray();
+    public ConfigurationFixRunner(IEnumerable<IConfigurationFix>? fixes = null, ConfigurationCheckRunner? checks = null)
+    {
+        _fixes = fixes?.ToArray();
+        _checks = checks ?? new();
+    }
 
     public async Task<ConfigurationFixReport> RunAsync(CheckContext context,
         Func<ConfigurationFixPrompt, CancellationToken, Task<bool>> confirmAsync,
@@ -24,8 +29,9 @@ public sealed class ConfigurationFixRunner
     {
         var actions = new List<FixActionResult>();
         var fixes = _fixes ??
-            [new SymbolFieldsTableFix(), new EditTabMetadataFix(), new ExportConfigurationFix(), new FieldOrderFix(), new RevisionFix(context.Revision), new GerberPlotSettingsFix()];
-        var checks = new ConfigurationCheckRunner();
+            [new SymbolFieldsTableFix(), new EditTabMetadataFix(), new ExportConfigurationFix(), new FieldOrderFix(), new RevisionFix(context.Revision), new GerberPlotSettingsFix(), new OepsDescriptionFix()];
+        context = context with { Database = context.Database.ToArray() };
+        var checks = _checks;
         var report = await checks.RunAsync(context, cancellationToken);
         foreach (var fix in fixes)
         {
@@ -35,8 +41,14 @@ public sealed class ConfigurationFixRunner
             try
             {
                 // Prepare an exact candidate before asking. No project or backup is written here.
+                OepsDescriptionFix.Plan? descriptionPlan = null;
                 var edits = await Task.Run(async () =>
                 {
+                    if (fix is OepsDescriptionFix descriptionFix)
+                    {
+                        descriptionPlan = await descriptionFix.PrepareAsync(context, cancellationToken);
+                        return descriptionPlan.Edits;
+                    }
                     if (fix is GerberPlotSettingsFix gerberFix)
                         return await gerberFix.PrepareAsync(context.ProjectDirectory, cancellationToken);
                     var snapshot = await ProjectConfigurationStore.LoadAsync(context.ProjectDirectory, cancellationToken);
@@ -50,7 +62,11 @@ public sealed class ConfigurationFixRunner
                     return (IReadOnlyList<ConfigurationFileEdit>)[ProjectConfigurationStore.PrepareEdit(snapshot, document)];
                 }, cancellationToken);
 
-                if (!await confirmAsync(new(failure, fix.Description), cancellationToken))
+                if (descriptionPlan is { HasChanges: false })
+                {
+                    actions.Add(new(fix.CheckName, FixActionStatus.Skipped, descriptionPlan.Summary));
+                }
+                else if (!await confirmAsync(new(failure, descriptionPlan?.Summary ?? fix.Description), cancellationToken))
                 {
                     actions.Add(new(fix.CheckName, FixActionStatus.Skipped, "Declined; no changes applied for this check."));
                 }
@@ -59,7 +75,8 @@ public sealed class ConfigurationFixRunner
                     cancellationToken.ThrowIfCancellationRequested();
                     var backups = await Task.Run(() => ConfigurationFileStore.SaveAsync(edits, cancellationToken), cancellationToken);
                     actions.Add(new(fix.CheckName, FixActionStatus.Fixed,
-                        backups.Count == 0 ? "Already configured." : "Fix applied. Originals saved in .oeps-backups."));
+                        backups.Count == 0 ? "Already configured." : "Fix applied. Originals saved in .oeps-backups." +
+                        (descriptionPlan is null ? "" : "\n" + descriptionPlan.Summary)));
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }

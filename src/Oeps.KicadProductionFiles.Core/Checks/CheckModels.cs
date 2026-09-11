@@ -8,7 +8,10 @@ public sealed record CheckContext(
     int DatabaseComponentCount = 0,
     DateTimeOffset? DatabaseLastSuccessfulSyncUtc = null,
     string? DatabaseLastError = null,
-    string Revision = "");
+    string Revision = "")
+{
+    public IReadOnlyList<Data.Component> Database { get; init; } = [];
+}
 
 public sealed record CheckResult(string Name, CheckStatus Status, string Detail);
 
@@ -17,6 +20,7 @@ public sealed record CheckReport(IReadOnlyList<CheckResult> Entries)
     public string Title { get; init; } = "Setup checks";
     public bool HasFailures => Entries.Any(entry => entry.Status == CheckStatus.Failed);
     public bool HasPendingChecks => Entries.Any(entry => entry.Status == CheckStatus.Pending);
+    public bool AllPassed => Entries.Count > 0 && Entries.All(entry => entry.Status == CheckStatus.Passed);
     public string Summary
     {
         get

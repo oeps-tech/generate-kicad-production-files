@@ -10,6 +10,52 @@ namespace Oeps.KicadProductionFiles.Tests;
 public static class SchematicRevisionTests
 {
     [Test]
+    public static async Task NumericRevisionFixWritesNormalizedStringsToBothFiles()
+    {
+        foreach (var (input, expected) in new[]
+        {
+            ("ver1.2", "1.2"), ("Ver2", "2"), ("v1.2", "1.2"),
+            ("v1.3.3", "1.3.3"), ("ver1.3.5", "1.3.5"), (" V 1.10.03 ", "1.10.03")
+        })
+        {
+            using var folder = new Fixture("A", "C");
+            var context = folder.Context with { Revision = input };
+            await File.WriteAllTextAsync(Path.ChangeExtension(folder.Project, ".kicad_pcb"), GerberPlotSettingsTests.GoodBoard.Replace("RevB", "Version" + expected));
+            Assert.Equal(CheckStatus.Failed, (await new RevisionCheck().RunAsync(context)).Status);
+            var prompts = 0;
+            var result = await ConfigurationTestChecks.CreateFixRunner().RunAsync(context, (prompt, _) =>
+            {
+                prompts++;
+                Assert.Equal("Revision", prompt.Failure.Name);
+                return Task.FromResult(true);
+            });
+            Assert.Equal(1, prompts);
+            Assert.False(result.Checks.HasFailures);
+            Assert.Equal(2, folder.Backups.Length);
+            var project = JsonNode.Parse(await File.ReadAllTextAsync(folder.Project))!;
+            Assert.Equal(expected, project["board"]!["ipc2581"]!["sch_revision"]!.GetValue<string>());
+            Assert.Equal(expected, new SchematicRevisionDocument(await File.ReadAllTextAsync(folder.Schematic)).Revision);
+            await ConfigurationTestChecks.CreateFixRunner().RunAsync(context, (_, _) => throw new Exception("Normalized revision must not prompt again."));
+            Assert.Equal(2, folder.Backups.Length);
+        }
+    }
+
+    [Test]
+    public static async Task NumericRevisionComparisonAcceptsPrefixesAndPreservesDistinctVersions()
+    {
+        foreach (var saved in new[] { "1.2", "ver1.2", "Ver1.2", "v1.2", " V1.2 " })
+        {
+            using var folder = new Fixture(saved, saved);
+            foreach (var input in new[] { "1.2", "ver1.2", "v1.2", " REV1.2 " })
+                Assert.Equal(CheckStatus.Passed, (await new RevisionCheck().RunAsync(folder.Context with { Revision = input })).Status);
+            foreach (var input in new[] { "v1.3", "Ver2", "v1.2.0", "v1.20" })
+                Assert.Equal(CheckStatus.Failed, (await new RevisionCheck().RunAsync(folder.Context with { Revision = input })).Status);
+        }
+        Assert.Equal("V", RevisionValue.Normalize("V"));
+        Assert.Equal("VA", RevisionValue.Normalize("VA"));
+    }
+
+    [Test]
     public static void OnlyRootTitleRevisionIsReadAndOnlyItsTokenChanges()
     {
         const string text = """
@@ -98,7 +144,7 @@ public static class SchematicRevisionTests
         var result = await new RevisionCheck().RunAsync(folder.Context);
         Assert.Equal(CheckStatus.Failed, result.Status);
         Assert.True(result.Detail.Contains("same name"));
-        var report = await new ConfigurationFixRunner([new RevisionFix("B")]).RunAsync(folder.Context,
+        var report = await ConfigurationTestChecks.CreateFixRunner([new RevisionFix("B")]).RunAsync(folder.Context,
             (_, _) => throw new Exception("A missing main schematic must not prompt to modify another file."));
         Assert.Equal(FixActionStatus.Failed, report.Actions.Single().Status);
         Assert.Equal(0, folder.Backups.Length);
@@ -111,7 +157,7 @@ public static class SchematicRevisionTests
         var beforeProject = await File.ReadAllBytesAsync(folder.Project);
         var beforeSchematic = await File.ReadAllBytesAsync(folder.Schematic);
         var prompts = 0;
-        var result = await new ConfigurationFixRunner().RunAsync(folder.Context, async (prompt, token) =>
+        var result = await ConfigurationTestChecks.CreateFixRunner().RunAsync(folder.Context, async (prompt, token) =>
         {
             prompts++;
             Assert.Equal("Revision", prompt.Failure.Name);
@@ -127,7 +173,7 @@ public static class SchematicRevisionTests
         Assert.True(Enumerable.SequenceEqual(beforeSchematic, await File.ReadAllBytesAsync(folder.Backups.Single(path => path.Contains(".kicad_sch.")))));
         var afterSchematic = await File.ReadAllBytesAsync(folder.Schematic);
         Assert.True(afterSchematic.SequenceEqual(Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(beforeSchematic).Replace("(rev \"C\")", "(rev \"B\")"))));
-        await new ConfigurationFixRunner().RunAsync(folder.Context, (_, _) => throw new Exception("Already matching revisions must not prompt."));
+        await ConfigurationTestChecks.CreateFixRunner().RunAsync(folder.Context, (_, _) => throw new Exception("Already matching revisions must not prompt."));
         Assert.Equal(2, folder.Backups.Length);
     }
 
@@ -137,7 +183,7 @@ public static class SchematicRevisionTests
         using var folder = new Fixture("A", "C");
         var beforeProject = await File.ReadAllBytesAsync(folder.Project);
         var beforeSchematic = await File.ReadAllBytesAsync(folder.Schematic);
-        var result = await new ConfigurationFixRunner().RunAsync(folder.Context, (_, _) => Task.FromResult(false));
+        var result = await ConfigurationTestChecks.CreateFixRunner().RunAsync(folder.Context, (_, _) => Task.FromResult(false));
         Assert.Equal(FixActionStatus.Skipped, result.Actions.Single().Status);
         Assert.True(Enumerable.SequenceEqual(beforeProject, await File.ReadAllBytesAsync(folder.Project)));
         Assert.True(Enumerable.SequenceEqual(beforeSchematic, await File.ReadAllBytesAsync(folder.Schematic)));
@@ -149,7 +195,7 @@ public static class SchematicRevisionTests
     {
         using var folder = new Fixture("RevB", "C");
         var before = await File.ReadAllBytesAsync(folder.Project);
-        var result = await new ConfigurationFixRunner().RunAsync(folder.Context, (_, _) => Task.FromResult(true));
+        var result = await ConfigurationTestChecks.CreateFixRunner().RunAsync(folder.Context, (_, _) => Task.FromResult(true));
         Assert.False(result.Checks.HasFailures);
         Assert.True(Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(folder.Project)));
         Assert.Equal(1, folder.Backups.Length);
@@ -166,7 +212,7 @@ public static class SchematicRevisionTests
             var beforeSchematic = await File.ReadAllBytesAsync(folder.Schematic);
             var target = editSchematic ? folder.Schematic : folder.Project;
             var external = (await File.ReadAllBytesAsync(target)).Concat(new byte[] { 32 }).ToArray();
-            var result = await new ConfigurationFixRunner().RunAsync(folder.Context, async (_, token) =>
+            var result = await ConfigurationTestChecks.CreateFixRunner().RunAsync(folder.Context, async (_, token) =>
             { await File.WriteAllBytesAsync(target, external, token); return true; });
             Assert.Equal(FixActionStatus.Failed, result.Actions.Single().Status);
             Assert.True(result.Actions.Single().Detail.Contains("changed after"));
@@ -183,7 +229,7 @@ public static class SchematicRevisionTests
         var beforeProject = await File.ReadAllBytesAsync(folder.Project);
         var beforeSchematic = await File.ReadAllBytesAsync(folder.Schematic);
         using var cancelled = new CancellationTokenSource();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => new ConfigurationFixRunner().RunAsync(folder.Context,
+        await Assert.ThrowsAsync<OperationCanceledException>(() => ConfigurationTestChecks.CreateFixRunner().RunAsync(folder.Context,
             (_, _) => { cancelled.Cancel(); return Task.FromResult(true); }, cancelled.Token));
         Assert.True(Enumerable.SequenceEqual(beforeProject, await File.ReadAllBytesAsync(folder.Project)));
         Assert.True(Enumerable.SequenceEqual(beforeSchematic, await File.ReadAllBytesAsync(folder.Schematic)));
@@ -196,7 +242,7 @@ public static class SchematicRevisionTests
         using var folder = new Fixture("A", "C");
         var before = await File.ReadAllBytesAsync(folder.Project);
         await File.WriteAllTextAsync(folder.Schematic, "(kicad_sch (title_block (rev \"unterminated)");
-        var result = await new ConfigurationFixRunner().RunAsync(folder.Context, (_, _) => throw new Exception("Invalid schematic must not prompt."));
+        var result = await ConfigurationTestChecks.CreateFixRunner().RunAsync(folder.Context, (_, _) => throw new Exception("Invalid schematic must not prompt."));
         Assert.Equal(FixActionStatus.Failed, result.Actions.Single().Status);
         Assert.True(Enumerable.SequenceEqual(before, await File.ReadAllBytesAsync(folder.Project)));
         Assert.Equal(0, folder.Backups.Length);
@@ -211,7 +257,7 @@ public static class SchematicRevisionTests
         File.SetAttributes(folder.Schematic, FileAttributes.ReadOnly);
         try
         {
-            var result = await new ConfigurationFixRunner().RunAsync(folder.Context, (_, _) => Task.FromResult(true));
+            var result = await ConfigurationTestChecks.CreateFixRunner().RunAsync(folder.Context, (_, _) => Task.FromResult(true));
             Assert.Equal(FixActionStatus.Failed, result.Actions.Single().Status);
             Assert.True(Enumerable.SequenceEqual(beforeProject, await File.ReadAllBytesAsync(folder.Project)));
             Assert.True(Enumerable.SequenceEqual(beforeSchematic, await File.ReadAllBytesAsync(folder.Schematic)));

@@ -121,7 +121,7 @@ public static class ExportConfigurationCheckTests
             await File.WriteAllTextAsync(project, "{\"schematic\":" + ValidConfiguration + "}");
             var before = await File.ReadAllBytesAsync(project);
             var report = await new ConfigurationCheckRunner().RunAsync(new("", directory));
-            Assert.Equal(6, report.Entries.Count);
+            Assert.Equal(8, report.Entries.Count);
             Assert.Equal(CheckStatus.Failed, report.Entries[0].Status);
             Assert.Equal(CheckStatus.Failed, report.Entries[1].Status);
             Assert.Equal("Export configuration", report.Entries[2].Name);

@@ -38,7 +38,7 @@ public static class RevisionCheckTests
     [Test]
     public static void EmptyAndPrefixOnlyExpectedOrSavedRevisionsNeverPass()
     {
-        foreach (var invalid in new[] { "", " ", "\t\r\n", "rev", "REV", " Rev \t" })
+        foreach (var invalid in new[] { "", " ", "\t\r\n", "rev", "REV", " Rev \t", "ver", " VER " })
         {
             Assert.Equal(CheckStatus.Failed, Validate(Project("B"), invalid).Status);
             Assert.Equal(CheckStatus.Failed, Validate(Project(invalid), "B").Status);
@@ -235,7 +235,7 @@ public static class RevisionCheckTests
             await File.WriteAllTextAsync(folder.ProjectFile, project.ToJsonString());
             var before = await File.ReadAllBytesAsync(folder.ProjectFile);
             var count = 0;
-            var report = await new ConfigurationFixRunner([new RevisionFix("revB")]).RunAsync(
+            var report = await ConfigurationTestChecks.CreateFixRunner([new RevisionFix("revB")]).RunAsync(
                 new("", folder.DirectoryPath, Revision: "revB"), async (prompt, cancellationToken) =>
                 {
                     count++;

@@ -27,6 +27,10 @@ internal static class Program
     public static async Task<int> Main(string[] args)
     {
         if (args.Length == 2 && args[0] == "--verify-live") return await IntegrationChecks.VerifyLiveAsync(args[1]);
+        if (args.Length == 4 && args[0] == "--verify-bom-identifiers")
+            return await IntegrationChecks.VerifyBomIdentifiersAsync(args[1], args[2], args[3]);
+        if (args.Length == 4 && args[0] == "--verify-description-fix")
+            return await IntegrationChecks.VerifyDescriptionFixAsync(args[1], args[2], args[3]);
         if (args.Length is 2 or 3 && args[0] == "--verify-configuration")
             return await IntegrationChecks.VerifyConfigurationAsync(args[1], args.Length == 3 ? args[2] : "");
 

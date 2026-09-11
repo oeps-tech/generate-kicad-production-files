@@ -12,7 +12,7 @@ public static class ConfigurationFixRunnerTests
     {
         using var folder = new FixFolder(BrokenProject());
         var prompts = new List<string>();
-        var report = await new ConfigurationFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), async (prompt, token) =>
+        var report = await ConfigurationTestChecks.CreateFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), async (prompt, token) =>
         {
             Assert.Equal(CheckStatus.Failed, prompt.Failure.Status);
             Assert.True(!string.IsNullOrWhiteSpace(prompt.Description));
@@ -35,7 +35,7 @@ public static class ConfigurationFixRunnerTests
     {
         using var folder = new FixFolder(BrokenProject());
         var count = 0;
-        var report = await new ConfigurationFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), (_, _) => { count++; return Task.FromResult(false); });
+        var report = await ConfigurationTestChecks.CreateFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), (_, _) => { count++; return Task.FromResult(false); });
         // Field order cannot be prepared while MPN is still missing, so it is reported as blocked.
         Assert.Equal(3, count);
         Assert.Equal(3, report.Actions.Count(action => action.Status == FixActionStatus.Skipped));
@@ -48,7 +48,7 @@ public static class ConfigurationFixRunnerTests
     public static async Task DeclinedFieldFixIsNotAppliedByAnApprovedOrderFix()
     {
         using var folder = new FixFolder(BrokenProject());
-        var report = await new ConfigurationFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), (prompt, _) =>
+        var report = await ConfigurationTestChecks.CreateFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), (prompt, _) =>
             Task.FromResult(prompt.Failure.Name != "Symbol Fields Table"));
         Assert.Equal(CheckStatus.Failed, report.Checks.Entries.Single(entry => entry.Name == "Symbol Fields Table").Status);
         Assert.Equal(CheckStatus.Passed, report.Checks.Entries.Single(entry => entry.Name == "Edit Tab metadata").Status);
@@ -63,14 +63,14 @@ public static class ConfigurationFixRunnerTests
     public static async Task AlreadyCorrectChecksAndResolvedFailuresDoNotPrompt()
     {
         using var good = new FixFolder(ConfiguredProject());
-        var report = await new ConfigurationFixRunner().RunAsync(new("", good.Directory, Revision: "revB"), (_, _) => throw new Exception("Unexpected prompt."));
+        var report = await ConfigurationTestChecks.CreateFixRunner().RunAsync(new("", good.Directory, Revision: "revB"), (_, _) => throw new Exception("Unexpected prompt."));
         Assert.Equal(0, report.Actions.Count);
         Assert.Equal(good.InitialText, await File.ReadAllTextAsync(good.File));
         Assert.Equal(0, good.Backups.Length);
 
         using var missing = new FixFolder(new JsonObject());
         var prompts = new List<string>();
-        report = await new ConfigurationFixRunner().RunAsync(new("", missing.Directory, Revision: "revB"), (prompt, _) =>
+        report = await ConfigurationTestChecks.CreateFixRunner().RunAsync(new("", missing.Directory, Revision: "revB"), (prompt, _) =>
         { prompts.Add(prompt.Failure.Name); return Task.FromResult(true); });
         Assert.False(report.Checks.HasFailures);
         Assert.False(prompts.Contains("Field order"));
@@ -83,7 +83,7 @@ public static class ConfigurationFixRunnerTests
         project["schematic"]!["bom_settings"]!["group_symbols"] = false;
         using var folder = new FixFolder(project);
         var external = folder.InitialText + "\n ";
-        var report = await new ConfigurationFixRunner([new EditTabMetadataFix()]).RunAsync(new("", folder.Directory, Revision: "revB"), async (_, token) =>
+        var report = await ConfigurationTestChecks.CreateFixRunner([new EditTabMetadataFix()]).RunAsync(new("", folder.Directory, Revision: "revB"), async (_, token) =>
         { await File.WriteAllTextAsync(folder.File, external, token); return true; });
         Assert.Equal(FixActionStatus.Failed, report.Actions.Single().Status);
         Assert.True(report.Actions.Single().Detail.Contains("changed after the fix was prepared"));
@@ -96,7 +96,7 @@ public static class ConfigurationFixRunnerTests
     {
         using var folder = new FixFolder(BrokenProject());
         using var cancellation = new CancellationTokenSource();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => new ConfigurationFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), (_, _) =>
+        await Assert.ThrowsAsync<OperationCanceledException>(() => ConfigurationTestChecks.CreateFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), (_, _) =>
         { cancellation.Cancel(); return Task.FromResult(true); }, cancellation.Token));
         Assert.Equal(folder.InitialText, await File.ReadAllTextAsync(folder.File));
         Assert.Equal(0, folder.Backups.Length);
@@ -135,7 +135,7 @@ public static class ConfigurationFixRunnerTests
     {
         using var folder = new FixFolder(ConfiguredProject());
         await File.WriteAllTextAsync(Path.Combine(folder.Directory, "another.kicad_pro"), "{}");
-        var report = await new ConfigurationFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), (_, _) => throw new Exception("Unexpected prompt."));
+        var report = await ConfigurationTestChecks.CreateFixRunner().RunAsync(new("", folder.Directory, Revision: "revB"), (_, _) => throw new Exception("Unexpected prompt."));
         Assert.Equal(6, report.Actions.Count(action => action.Status == FixActionStatus.Failed));
         Assert.Equal(folder.InitialText, await File.ReadAllTextAsync(folder.File));
         Assert.Equal(0, folder.Backups.Length);

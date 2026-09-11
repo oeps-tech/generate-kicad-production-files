@@ -11,6 +11,7 @@ public static class GerberPlotSettingsTests
     public const string GoodBoard = """
         (kicad_pcb
           (version 20260206)
+          (gr_text "RevB" (layer "F.SilkS"))
           (setup (aux_axis_origin 10 20)
             (pcbplotparams
               (layerselection 0x00000000_00000000_5555555f_575df5ff)
@@ -182,7 +183,7 @@ public static class GerberPlotSettingsTests
             var before = await File.ReadAllBytesAsync(folder.Board);
             var project = await File.ReadAllBytesAsync(folder.Project);
             var confirmations = 0;
-            var report = await new ConfigurationFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context, async (prompt, token) =>
+            var report = await ConfigurationTestChecks.CreateFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context, async (prompt, token) =>
             {
                 confirmations++;
                 Assert.Equal("Gerber plot settings", prompt.Failure.Name);
@@ -203,7 +204,7 @@ public static class GerberPlotSettingsTests
                 Assert.True(Encoding.UTF8.GetBytes("\uFEFF" + GoodBoard).SequenceEqual(after));
                 var backup = await File.ReadAllBytesAsync(folder.Backups.Single());
                 Assert.True(before.SequenceEqual(backup));
-                await new ConfigurationFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context, (_, _) => throw new Exception("Passing check must not prompt."));
+                await ConfigurationTestChecks.CreateFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context, (_, _) => throw new Exception("Passing check must not prompt."));
             }
             else Assert.True(before.SequenceEqual(after));
         }
@@ -215,7 +216,7 @@ public static class GerberPlotSettingsTests
         using var folder = new Fixture();
         await File.WriteAllTextAsync(folder.Board, GoodBoard.Replace("(mirror no)", "(mirror yes)"));
         var external = await File.ReadAllTextAsync(folder.Board) + "\n ";
-        var result = await new ConfigurationFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context, async (_, token) =>
+        var result = await ConfigurationTestChecks.CreateFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context, async (_, token) =>
         { await File.WriteAllTextAsync(folder.Board, external, token); return true; });
         Assert.Equal(FixActionStatus.Failed, result.Actions.Single().Status);
         Assert.True(result.Actions.Single().Detail.Contains("changed after"));
@@ -230,12 +231,12 @@ public static class GerberPlotSettingsTests
         await File.WriteAllTextAsync(folder.Board, GoodBoard.Replace("(mirror no)", "(mirror yes)"));
         var before = await File.ReadAllBytesAsync(folder.Board);
         using var cancelled = new CancellationTokenSource();
-        await Assert.ThrowsAsync<OperationCanceledException>(() => new ConfigurationFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context,
+        await Assert.ThrowsAsync<OperationCanceledException>(() => ConfigurationTestChecks.CreateFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context,
             (_, _) => { cancelled.Cancel(); return Task.FromResult(true); }, cancelled.Token));
         var after = await File.ReadAllBytesAsync(folder.Board);
         Assert.True(before.SequenceEqual(after));
         await File.WriteAllTextAsync(folder.Board, "(kicad_pcb");
-        var result = await new ConfigurationFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context, (_, _) => throw new Exception("Malformed board must not prompt."));
+        var result = await ConfigurationTestChecks.CreateFixRunner([new GerberPlotSettingsFix()]).RunAsync(folder.Context, (_, _) => throw new Exception("Malformed board must not prompt."));
         Assert.Equal(FixActionStatus.Failed, result.Actions.Single().Status);
         Assert.Equal(0, folder.Backups.Length);
     }

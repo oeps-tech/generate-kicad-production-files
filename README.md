@@ -1,6 +1,6 @@
 # OEPS KiCad Production Files
 
-Windows desktop infrastructure for checking and exporting KiCad production files. The interface follows `raw-material-sticker`: the same OEPS icon, Segoe UI font, colors, field borders, footer, and **620-pixel default client width**. The default height is 790 pixels; the window can be resized and remembers its size, position, paths and revision.
+Windows desktop infrastructure for checking and exporting KiCad production files. The interface follows `raw-material-sticker`: the same OEPS icon, Segoe UI font, colors, field borders, footer, and **620-pixel default client width** at 100% scaling. The default height is 790 pixels. The app and launcher use per-monitor DPI scaling with a 96-DPI design baseline. The window fits the current screen on startup; shorter windows scroll the fields and report while keeping the footer visible. It remembers its size, position, paths and revision.
 
 ![Application preview](docs/production-generation-preview.png)
 
@@ -8,20 +8,32 @@ Windows desktop infrastructure for checking and exporting KiCad production files
 
 Enter or browse for `kicad-cli.exe` and the **project folder** containing the main `.kicad_sch` schematic and `.kicad_pcb` board. The newest KiCad CLI in the standard Windows installation location is detected when no CLI preference has been saved.
 
-Enter the expected **Revision** below KiCad files, for example `revA`, `RevB`, or `B`. Paths and revision are saved between sessions. Changing any entry requires a fresh configuration check.
+Enter the expected **Revision** below KiCad files, for example `revA`, `RevB`, `ver1.2`, `Ver2`, or `v1.3.3`. Paths and revision are saved between sessions. Changing any entry requires a fresh configuration check.
 
 | Button | Available now |
 | --- | --- |
 | Update database | Downloads the shared OEPS spreadsheet, validates it, and saves a local CSV cache. |
-| Check files configuration | Checks Symbol Fields Table fields, Edit tab metadata, export configuration, field order, revision, and the main PCB's Gerber plot settings. |
+| Check files configuration | Checks Symbol Fields Table fields, Edit tab metadata, export configuration, field order, revision, PCB silkscreen revision, Gerber plot settings, and BOM identifiers against the database via CLI. |
 | Configure files | Rechecks the project and offers a separate Yes/No confirmation for each repairable failed check, then saves approved fixes and rechecks the result. |
-| Generate production files | Optionally clears manufacturing, then exports the selected Gerbers, placement CSV, drill files/maps and IPC-D-356 netlist using KiCad CLI. |
+| Generate production files | Optionally clears manufacturing, exports the BOM first, checks its identifiers against the database and layout, then exports selected Gerbers, placements, drills/maps and IPC-D-356. Compares BOM and placement counts and references. |
 
-The report is selectable, scrollable text, with a separate header for each check. Configuration checks run away from the GUI thread and do not require the CLI or component database. Save changes in KiCad before checking: the app reads the saved project file.
+The report is selectable, scrollable text, with a separate header for each check. Every `[PASSED]` header has a green **✓** before it; every `[FAILED]` header has a red **✗**. The first line shows **✓ [PASSED] All tests passed** or **✗ [FAILED] Not all tests passed**, covering every check in that report, including production export errors and BOM/placement mismatches. Detail text keeps its normal colour. Configuration checks run away from the GUI thread. The BOM identifier check requires KiCad CLI and the cached component database; the other checks still run if either is unavailable. Save changes in KiCad before checking: only saved files are read.
+
+### Schematic BOM identifiers via CLI
+
+`CheckFilesConfiguration/SchematicBomIdentifiersCheck.cs` exports a temporary BOM from the main `.kicad_sch`, letting KiCad follow linked sheets. It requests `Reference`, `OEPS PN`, `OEPSPN`, `MPN`, and `OEPS Description` explicitly, regardless of saved column visibility or export labels. The check uses the default variant, no grouping or reference filter, includes DNP symbols, and excludes symbols marked Exclude from BOM. It preserves tabs and line breaks so invalid field characters can be reported.
+
+Each BOM component must have an OEPS PN (either alias), MPN, and OEPS Description. Its PN/MPN pair must exist in the current cached database, and OEPS Description must match the database's `Description` for that pair. Comparisons ignore outer whitespace but preserve case, punctuation and internal spacing. Failures name each affected reference and explain missing fields, conflicting aliases, unknown OEPS PNs, incorrect MPN pairings, or mismatched descriptions (including the expected database description). A database row with no description also fails validation. The existing five-minute database refresh is unchanged. Missing CLI, export errors, invalid CSV, or an unavailable database fail this check.
+
+Success shows only `[PASSED] Schematic BOM OEPS PN / MPN / Description database validation`. The temporary CSV is deleted after checking; checking does not generate or clear manufacturing files or modify the saved Symbol Fields Table.
+
+**Configure files** offers an OEPS Description fix when this test fails. `ConfigureFiles/OepsDescriptionFix.cs` prepares a list of eligible references and database descriptions before a scrollable Yes/No confirmation (default No). On approval, it fills missing descriptions or replaces incorrect ones in the main schematic and linked sheets, provided the CLI BOM and saved symbol both have the same verified OEPS PN/MPN pair and the database supplies one valid description. Identifiers stay unchanged. Missing/incorrect pairs, ambiguous instances, and unavailable/conflicting descriptions are left unchanged and reported; these failures can remain after a partial fix. New description fields are hidden. Existing property formatting, symbol geometry and library definitions are preserved.
+
+The fix follows linked sheets inside the project folder, supports repeated sheets and multiple symbol units, and does not scan unrelated schematic files. External sheets, filesystem links, cycles and unresolved sheet-filename variables require manual attention. Each changed schematic is backed up in `.oeps-backups` beside that file; all source snapshots are rechecked before saving, and the CLI test reruns after the fix. Declining the prompt leaves schematic files unchanged.
 
 Configure files and Generate production files start disabled. Changing either the KiCad CLI or KiCad files path resets both buttons. Pressing Check files configuration enables Configure files; completing the checks without errors enables Generate production files. A new check clears the previous successful result until it finishes.
 
-Generation options are stacked on the right between the buttons and report, with each label followed by its checkbox and all checkboxes sharing the same right edge. **Generate production files even with errors** starts unchecked. **Delete all files before generate production files**, **Generate Gerber files**, **Generate placement files**, **Generate drill files**, and **Generate IPC-D-356 netlist** start checked each time the app opens. At least one file type must be selected. The override permits generation before a check or after a failed check; generation waits while a check, configuration fix or export is running. Options and inputs are locked during those operations. Database refreshes preserve the current check result.
+Generation options are stacked on the right between the buttons and report, with each label followed by its checkbox and all checkboxes sharing the same right edge. **Generate production files even with errors** starts unchecked. **Delete all files before generate production files**, **Generate Gerber files**, **Generate placement files**, **Generate drill files**, and **Generate IPC-D-356 netlist** start checked each time the app opens. The BOM is always generated first; clearing all four file-type checkboxes generates just the BOM. The override permits generation before a check or after a failed check; generation waits while a check, configuration fix or export is running. Options and inputs are locked during those operations. Database refreshes preserve the current check result.
 
 ### Symbol Fields Table
 
@@ -90,7 +102,11 @@ Passing results show only `[PASSED] Field order`. Failures show the expected and
 
 ## Revision check
 
-The **Revision** check compares the entry in the GUI with both `board.ipc2581.sch_revision` in the `.kicad_pro` file and `(rev "...")` in the root `(title_block ...)` of the main `.kicad_sch`. The main schematic must have the same filename stem as the project, for example `main.kicad_pro` and `main.kicad_sch`. Surrounding spaces, letter case, and an optional leading `rev` are ignored, so `B`, `RevB`, and `revB` match.
+The additional **PCB silkscreen revision** check looks for the expected revision in visible saved text on `F.SilkS` or `B.SilkS` in the matching main `.kicad_pcb`. It accepts bare values and case-insensitive captions such as `Version1.2.`, `version 1.2`, `v1.2`, `Revision B`, `revisionB`, `revB` or `rB`, including within longer strings. Revision boundaries matter: `1.2.3` does not satisfy `1.2`, and `BB` does not satisfy `B`. Board text, text boxes, and visible footprint text/properties are checked; hidden text, other layers, title-block metadata and unresolved `${...}` text variables do not count.
+
+This reports only `[PASSED] PCB silkscreen revision` on success. A failure explains that the board needs a manual correction in KiCad. There is **no automatic fix and no confirmation popup** for this check. The separate project/schematic Revision fix remains available and does not change PCB silkscreen text.
+
+The **Revision** check compares the entry in the GUI with both `board.ipc2581.sch_revision` in the `.kicad_pro` file and `(rev "...")` in the root `(title_block ...)` of the main `.kicad_sch`. The main schematic must have the same filename stem as the project, for example `main.kicad_pro` and `main.kicad_sch`. Surrounding spaces, letter case, and an optional leading `rev` or `ver` (or `v` before a number) are ignored. `B`, `RevB`, and `revB` match; `ver1.2`, `v1.2`, and `1.2` match. Fixes write the normalized string: `Ver2` becomes `2`, `v1.3.3` becomes `1.3.3`, and `ver1.3.5` becomes `1.3.5`. Dotted numbers are preserved exactly, and already matching saved values are kept.
 
 When both values match, the report shows only `[PASSED] Revision`. A missing or different saved revision, an invalid setting, or an empty Revision entry shows `[FAILED] Revision` with the reason and the affected file type. A bare `Rev` prefix is also invalid because it has no revision value. A missing main schematic is reported; other schematics and subsheets are not substituted for it.
 
@@ -141,6 +157,7 @@ Each fix has its own source file in `src/Oeps.KicadProductionFiles.Core/Configur
 | `FieldOrderFix.cs` | Reorders existing required fields and clears Included for extra columns while retaining their settings. |
 | `RevisionFix.cs` | Corrects the project revision and main schematic title-block revision under one confirmation, using the entered revision without its optional prefix, in uppercase (for example `B`). Already matching values are retained. Requires a nonempty Revision entry. |
 | `GerberPlotSettingsFix.cs` | Repairs the screenshot's saved PCB plot options and sets the output directory to `manufacturing/gerber/`. Adds missing settings/containers, accepts omitted default precision, and preserves other PCB text, including layers. |
+| `OepsDescriptionFix.cs` | Fills or updates schematic OEPS Description for verified BOM/database PN/MPN pairs, after a reviewable confirmation; backs up changed sheets and reruns the CLI check. |
 
 Field order requires the required fields to exist and be included. If the Symbol Fields Table fix is declined while those inputs are missing, the order fix reports that dependency; it does not apply the declined field changes. Ambiguous alias columns, duplicate JSON keys, malformed structures, and missing or ambiguous project files are reported for manual correction rather than guessed at.
 
@@ -150,13 +167,33 @@ The schematic fix replaces only the revision string, preserving the title, compa
 
 The final report keeps the check results and lists fixed, skipped, or unsuccessful actions. Save your work in KiCad before configuring files, and reopen the project in KiCad afterward to load the saved settings. Configure files edits `.kicad_pro` settings, the main schematic's title-block revision, and the main PCB's plot options. PCB fixes use the same confirmation, original-file backup and stale-file protection. Duplicate or structured plot values are reported for manual correction.
 
-BOM/position quantity comparisons, OEPS PN/MPN validation, and BOM export remain future implementation steps.
+Component identifier validation runs after BOM generation, as described below. These checks have no automatic fixes.
 
 ## Generate production files
 
-Click **Generate production files** to export the selected file types. When Gerbers are selected, an OK/Cancel popup first asks you to open the board, make sure zones were filled, validate **Include Layers**, and save the board. Cancel stops the entire operation before cleanup or export. Placement-only and drill-only exports do not show this popup.
+Click **Generate production files** to export the BOM first, followed by the selected file types. When Gerbers are selected, an OK/Cancel popup first asks you to open the board, make sure zones were filled, validate **Include Layers**, and save the board. Cancel stops the entire operation before cleanup or export. The reminder is skipped when Gerbers are unchecked.
 
-The CLI path and support for every selected export are checked before cleanup. If deletion is selected, the app clears the entire contents of the selected project's `manufacturing` folder, including subfolders, once before generation. If it is cleared, unrelated files remain and matching generated filenames are replaced. Selecting no output types disables generation and never clears files. The main board must have the same filename stem as the single `.kicad_pro` file. Save PCB changes in KiCad first; the CLI reads the saved board.
+The CLI path, BOM configuration, main schematic, and support for every selected export are checked before cleanup. If deletion is selected, the app clears the entire contents of the selected project's `manufacturing` folder, including subfolders, once before generation. With deletion unchecked, unrelated files remain and matching generated filenames are replaced. The main schematic and board must have the same filename stem as the single `.kicad_pro` file. Save schematic, project settings and PCB changes in KiCad first; exports read the saved files.
+
+**BOM** goes to `manufacturing/bom/<project-name>.csv`. `BomFilesGenerator.cs` runs `sch export bom` on the main schematic, letting KiCad load its linked sheets. It passes the saved Symbol Fields Table's included fields, labels, order, grouping fields (including hidden grouping fields), filter and DNP selection from `.kicad_pro`. It uses the configured comma-separated, quoted CSV format, with comma-separated references and no reference ranges. Reference and `${QUANTITY}` must be included. Missing labels use the standard field labels. This uses KiCad's native Symbol Fields Table exporter.
+
+Ascending sorting and the existing Export configuration rules must be satisfied before generation, even with the override selected. The command uses KiCad's default ascending sort because passing `--sort-asc true` crashes the installed KiCad 10.0.3. The deprecated option to include symbols excluded from BOM cannot be enabled on that CLI. Unsupported or ambiguous field names/labels are reported before cleanup.
+
+The BOM **Component count** is the sum of Qty, so a grouped row containing five references counts as five components. The exported Reference list is checked against each row's quantity. When placement export is selected, `BomPlacementComparison.cs` compares the two newly generated reference lists, including duplicate occurrences. A count mismatch displays a warning popup with both counts. The report lists references present only in the BOM and references present only in placements, even when the totals happen to match. Matching files show only `[PASSED] BOM / placement comparison`. If placement export is unchecked, no comparison is made against old files. A BOM export failure stops the remaining exports.
+
+Three **read-only checks** run immediately after every successful BOM export, including BOM-only generation. Each has its own source file in `src/Oeps.KicadProductionFiles.Core/CheckProductionFiles/`:
+
+| Report header | Source | Validation |
+| --- | --- | --- |
+| BOM required fields: OEPS PN, MPN and OEPS Description | `BomIdentifiersCheck.cs` | Every BOM reference must have usable OEPS PN (or OEPSPN), MPN and OEPS Description values. Lists missing columns/values, invalid content, conflicting aliases and ambiguous BOM references. Does not need the database or PCB. |
+| BOM vs database: OEPS PN, MPN and OEPS Description | `BomDatabaseIdentifiersCheck.cs` | The PN/MPN pair must exist in the database. OEPS Description must match database Description for that same pair. Reports unknown PNs, wrong pairings, missing database descriptions and mismatched descriptions with expected values. Incomplete BOM values refer to the required-fields check instead of repeating its missing-field list. |
+| BOM vs layout: footprints, OEPS PN, MPN and OEPS Description | `BomLayoutIdentifiersCheck.cs` | Exactly one matching footprint must exist in the main PCB; it must contain OEPS PN, MPN and OEPS Description, and all three values must match the BOM. Reports missing/duplicate footprints, missing layout properties and differing values. This check compares the generated BOM with the PCB and does not consult the database. |
+
+The schematic source is the **freshly generated BOM**, which includes components from the main schematic and all linked sheets according to its saved inclusion/filter settings. Grouped rows are expanded by reference; fields are identified by their KiCad names, so custom CSV labels do not affect validation. PCB properties are read even when hidden. Footprints outside the BOM are outside these identifier checks; the existing BOM/placement comparison reports additional placement references.
+
+The checks accept `OEPS PN` and `OEPSPN`. If both have different nonempty values, the ambiguity is reported. Values are compared exactly after trimming outer whitespace, preserving case, leading zeros, punctuation and internal spacing. Missing values on both sides do not count as a match; duplicate properties, control characters and unresolved text variables are reported. The standard Description field is not a substitute for OEPS Description. If a BOM value is missing, layout presence and other available fields are still checked, but the layout result stays failed with a comparison-incomplete note referring to **BOM required fields: OEPS PN, MPN and OEPS Description**. It does not repeat the BOM's per-component missing-field messages or claim that uncomparable values differ. The database check uses one snapshot of the app's validated database/cache for the run, retaining the existing five-minute refresh interval. If no database is available, it fails with an instruction to update the database; layout comparison still runs independently.
+
+Passing checks show only their **✓ [PASSED]** header. Failed checks show **✗ [FAILED]** and the affected references; the GUI status indicates that component checks failed. These failures do not stop the other selected exports. No repair is registered and no fix popup is shown for these checks. Correct the schematic/PCB fields manually, save in KiCad, and generate again to recheck. They do not use a previously saved BOM in the configuration-check or Configure files workflow.
 
 **Gerber files** go to `manufacturing/gerber/`. `GerberFilesGenerator.cs` runs `pcb export gerbers --board-plot-params --check-zones --output <temporary-directory> <board>`, using KiCad's saved board plot settings and layer selection. The default variant is used. KiCad 10 CLI creates an auxiliary Gerber job file even when the board's `creategerberjobfile` is off; the app publishes it only when explicitly enabled in the board. CLI option behavior is documented in the [KiCad 10 CLI manual](https://docs.kicad.org/10.0/en/cli/cli.html).
 
@@ -180,9 +217,9 @@ The placement generator writes `manufacturing/assembly/<project-name>-pos.csv` w
 
 The CLI invocation is `pcb export pos --format csv --units mm --side both --use-drill-file-origin --output <csv> <board>`. Exclusion and negative-X switches are omitted.
 
-The report lists each generated file under its export's header, with component count for placements, or reports the CLI error. Each exporter writes to an empty temporary directory first, validates the output, then publishes it. Basic format checks detect missing, empty or truncated Gerbers, incorrect Excellon units/zero format, missing PTH/NPTH files/maps, and invalid placement CSV headers. These checks do not validate manufacturing correctness or board geometry. Failed CLI exports cannot pass using stale files or replace existing output. Errors report whether manufacturing was already cleared. Cleanup is confined to the selected project's `manufacturing` directory and refuses linked paths. Other project files and `.oeps-backups` are retained.
+The report lists each generated file under its export's header, with component counts for the BOM and placements, or reports the CLI error. Each exporter writes to an empty temporary directory first, validates the output, then publishes it. Basic format checks detect missing, empty or truncated Gerbers, incorrect Excellon units/zero format, missing PTH/NPTH files/maps, invalid CSV headers/rows, and invalid BOM quantities. CSV parsing handles quoted commas and escaped quotes; embedded line breaks do not inflate placement counts. These checks do not validate manufacturing correctness or board geometry. Failed CLI exports cannot pass using stale files or replace existing output. Successfully generated earlier files and their comparison remain in the report if a later export fails. Errors report whether manufacturing was already cleared. Cleanup is confined to the selected project's `manufacturing` directory and refuses linked paths. Other project files and `.oeps-backups` are retained.
 
-Each generation has its own source file under `src/Oeps.KicadProductionFiles.Core/GenerateProductionFiles/`: **`GerberFilesGenerator.cs`**, **`PlacementFilesGenerator.cs`**, **`DrillFilesGenerator.cs`**, and **`IpcD356FilesGenerator.cs`**. `ProductionGenerationRunner.cs` selects generators and handles optional cleanup once before the sequence. `ExportOutputDirectory.cs` handles temporary outputs, validation and publication.
+Each generation has its own source file under `src/Oeps.KicadProductionFiles.Core/GenerateProductionFiles/`: **`BomFilesGenerator.cs`**, **`GerberFilesGenerator.cs`**, **`PlacementFilesGenerator.cs`**, **`DrillFilesGenerator.cs`**, and **`IpcD356FilesGenerator.cs`**. `BomPlacementComparison.cs` compares component counts and references. `ProductionGenerationRunner.cs` selects generators and handles optional cleanup once before the sequence. `ExportOutputDirectory.cs` handles temporary outputs, validation and publication.
 
 ## Run from this checkout
 
@@ -227,19 +264,28 @@ Packaged `appsettings.json` contains the spreadsheet URL, header aliases, and re
 
 The launcher and installer follow the sticker app's model, using this application's own name, shortcuts, data directory, and `oeps-tech/generate-kicad-production-files` release repository.
 
-Build the installer and application update ZIPs:
+Build the MSI installer and application update ZIP with the .NET 10 x64 SDK and Desktop Runtime:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 ```
 
-The script builds the solution, runs the console verification suite, and writes versioned ZIPs plus SHA-256 files under `artifacts/`. Existing versioned artifacts are protected from accidental replacement.
+The script builds the solution, runs the console verification suite, and writes these files under `artifacts/`. Existing versioned artifacts are protected from accidental replacement.
 
-To install, extract `Oeps.KicadProductionFiles-0.1.0-setup-win-x64.zip` and run its `Install.cmd`. It creates desktop and Start-menu shortcuts. The bootstrap checks for the .NET 10 Desktop runtime and offers a verified per-user runtime download if required. No SDK is needed for the packaged application.
+- `Oeps.KicadProductionFiles-0.1.1-setup-win-x64.msi` and `.msi.sha256`: Windows installer with a private .NET 10 runtime.
+- `Oeps.KicadProductionFiles-0.1.1-win-x64.zip` and `.zip.sha256`: small application package used by the updater.
+
+Double-click the MSI to install for the current Windows user. It registers in Windows Installed apps and creates desktop and Start-menu shortcuts that open `Oeps.KicadProductionFiles.Launcher.exe` directly. Installation and normal startup do not run PowerShell or download a runtime; no SDK is needed on the target PC. PowerShell is only used for source development and CI packaging. `scripts/Build-Msi.ps1` installs the pinned WiX 4.0.6 build tool into `.tools/wix` on first use and bundles only the .NET host, Core runtime and Desktop runtime from the build SDK, excluding SDKs and ASP.NET.
+
+Install the MSI over the older ZIP-based setup to replace its PowerShell shortcuts. Existing preferences, component cache, installed app versions and recovery state remain in `%LOCALAPPDATA%\OEPS\KicadProductionFiles`. Previously pinned taskbar shortcuts may need to be replaced with the new shortcut.
+
+Windows Installer manages the launcher, runtime and bundled update package in `%LOCALAPPDATA%\OEPS KiCad Production Files Installer`. Uninstall removes those files and the shortcuts, preserving the separate user data and app version history. New MSI versions upgrade the installer-managed files; publish a new MSI to service the private runtime. Ordinary app ZIP updates only update the app. This product has separate installer and component identities from Raw Material Sticker so both can coexist.
+
+Packages are currently unsigned. The MSI removes the old PowerShell startup dependency; antivirus acceptance still needs verification on the affected computers.
 
 The desktop shortcut starts the updater. Updates are checked against stable GitHub releases, validated using checksums and package metadata, and promoted only after the new app signals readiness. The installed/previous version remains available for fallback. The GUI also checks for an available update every 30 minutes and explains how to apply it via the shortcut. Source `Run.cmd` opens the development build directly.
 
-The repository is currently private. Release downloads require repository access; the current updater cannot discover private releases because it uses unauthenticated requests. Use the full setup ZIP for installation and manual updates while it remains private. See [v0.1.0 release notes](docs/releases/v0.1.0.md), including the KiCad IPC-D-356 via-field issue and recommended KiCad version.
+The release repository is public, so the updater can discover published releases without GitHub credentials. Use the MSI for first-time installation and for updates to the bundled launcher/runtime; ordinary app updates use the smaller ZIP package. See [v0.1.0 release notes](docs/releases/v0.1.0.md) for the KiCad IPC-D-356 via-field issue and recommended KiCad version.
 
 The included GitHub workflow builds and verifies pushes/PRs. Pushing a stable `vX.Y.Z` tag publishes the matching release artifacts. No release is published merely by building locally.
 
@@ -271,7 +317,7 @@ The earlier setup/production check infrastructure remains available in `Core/Che
 - `BomPositionCountCheck.cs` (pending comparison policy)
 - `ComponentIdentifiersCheck.cs` (pending validation policy)
 
-The configuration button reports a missing or ambiguous project when the selected folder contains zero or multiple `.kicad_pro` files. BOM/position comparison, identifier validation, and additional production generators remain future workflow steps.
+The configuration button reports a missing or ambiguous project when the selected folder contains zero or multiple `.kicad_pro` files. Component identifier validation runs with production generation; additional production generators can be added independently.
 
 ## Verification
 

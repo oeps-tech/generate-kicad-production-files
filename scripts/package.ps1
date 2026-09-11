@@ -1,5 +1,5 @@
 param(
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.1.0',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.1.1',
     [string]$Dotnet = 'dotnet'
 )
 $ErrorActionPreference = 'Stop'
@@ -31,7 +31,7 @@ try {
     $outputRoot = Join-Path $repoRoot 'artifacts'
     $packageName = "Oeps.KicadProductionFiles-$Version-win-x64.zip"
     $packagePath = Join-Path $outputRoot $packageName
-    $installerName = "Oeps.KicadProductionFiles-$Version-setup-win-x64.zip"
+    $installerName = "Oeps.KicadProductionFiles-$Version-setup-win-x64.msi"
     $installerPath = Join-Path $outputRoot $installerName
     foreach ($artifactPath in @($packagePath, ($packagePath + '.sha256'), $installerPath, ($installerPath + '.sha256'))) {
         if (Test-Path -LiteralPath $artifactPath) { throw "Artifact already exists: $artifactPath. Use a new version or archive the existing artifact first." }
@@ -46,7 +46,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Verification failed.' }
     & $Dotnet publish src/Oeps.KicadProductionFiles.App -c Release -r win-x64 --self-contained false -p:Version=$Version -p:CopyOutputSymbolsToPublishDirectory=false -o $appStage --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Application publish failed.' }
-    & $Dotnet publish src/Oeps.KicadProductionFiles.Launcher -c Release -r win-x64 --self-contained false -p:Version=$Version -p:CopyOutputSymbolsToPublishDirectory=false -o (Join-Path $fullStage 'launcher') --nologo
+    & $Dotnet publish src/Oeps.KicadProductionFiles.Launcher -c Release -r win-x64 --self-contained false -p:Version=$Version -p:CopyOutputSymbolsToPublishDirectory=false -p:AppHostRelativeDotNet=../runtime -p:AppHostDotNetSearch=AppRelative -o (Join-Path $fullStage 'launcher') --nologo
     if ($LASTEXITCODE -ne 0) { throw 'Launcher publish failed.' }
     $manifest = @{ version=$Version; runtimeMajor=10; architecture='x64'; executable='Oeps.KicadProductionFiles.App.exe' } | ConvertTo-Json
     [IO.File]::WriteAllText((Join-Path $appStage 'update-manifest.json'), $manifest, [Text.UTF8Encoding]::new($false))
@@ -56,8 +56,7 @@ try {
     $checksum = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $packageName
     [IO.File]::WriteAllText(($packagePath + '.sha256'), ($checksum + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     Copy-Item -LiteralPath $packagePath, ($packagePath + '.sha256') -Destination $fullStage
-    foreach ($file in @('Install.cmd','Install-OEPS.ps1','Start-OEPS.ps1')) { Copy-Item -LiteralPath (Join-Path 'installer' $file) -Destination $fullStage }
-    New-PortableZip $fullStage $installerPath
+    & (Join-Path $PSScriptRoot 'Build-Msi.ps1') -Stage $fullStage -Version $Version -Output $installerPath -Dotnet $Dotnet
     $installerChecksum = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + $installerName
     [IO.File]::WriteAllText(($installerPath + '.sha256'), ($installerChecksum + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     Write-Output "App package: $packagePath"

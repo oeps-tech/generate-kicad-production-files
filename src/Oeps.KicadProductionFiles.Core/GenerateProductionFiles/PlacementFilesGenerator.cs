@@ -1,4 +1,5 @@
 using Oeps.KicadProductionFiles.Core.Kicad;
+using Oeps.KicadProductionFiles.Core.Data;
 
 namespace Oeps.KicadProductionFiles.Core.GenerateProductionFiles;
 
@@ -30,16 +31,13 @@ public sealed class PlacementFilesGenerator : IProductionFileGenerator
         ManufacturingDirectory.EnsureSafePath(context.ProjectDirectory, output);
         if (!File.Exists(output) || new FileInfo(output).Length == 0)
             throw new IOException("KiCad CLI completed without producing the placement CSV.");
-        var componentCount = 0;
-        using (var reader = File.OpenText(output))
-        {
-            if (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) != "Ref,Val,Package,PosX,PosY,Rot,Side")
-                throw new InvalidDataException("KiCad CLI did not produce the expected placement CSV format.");
-            while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is not null)
-                componentCount++;
-        }
+        var rows = CsvComponentParser.ReadRecords((await File.ReadAllTextAsync(output, cancellationToken).ConfigureAwait(false)).TrimStart('\uFEFF'));
+        if (rows.Count == 0 || !rows[0].SequenceEqual(new[] { "Ref", "Val", "Package", "PosX", "PosY", "Rot", "Side" })
+            || rows.Skip(1).Any(row => row.Count != 7 || string.IsNullOrWhiteSpace(row[0])))
+            throw new InvalidDataException("KiCad CLI did not produce the expected placement CSV format.");
+        var references = rows.Skip(1).Select(row => row[0].Trim()).ToArray();
         var paths = directory.Publish([output], cancellationToken);
-        return new(Name, paths[0], componentCount);
+        return new(Name, paths[0], references.Length) { References = references };
     }
 
     private static string Diagnostics(CliCommandResult result) => $"Exit code {result.ExitCode}. " +

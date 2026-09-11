@@ -39,6 +39,7 @@ internal sealed class LauncherForm : Form
 
     public LauncherForm(string[] args)
     {
+        SuspendLayout();
         _args = args;
         Text = "OEPS KiCad Production Files — starting";
         using (var iconStream = typeof(LauncherForm).Assembly.GetManifestResourceStream("Oeps.AppIcon"))
@@ -50,6 +51,7 @@ internal sealed class LauncherForm : Form
             }
         }
         ClientSize = new Size(480, 185);
+        AutoScaleDimensions = new SizeF(96f, 96f);
         AutoScaleMode = AutoScaleMode.Dpi;
         MinimumSize = new Size(460, 220);
         StartPosition = FormStartPosition.CenterScreen;
@@ -64,6 +66,7 @@ internal sealed class LauncherForm : Form
         _retry.Click += async (_, _) => await StartAsync();
         Shown += async (_, _) => await StartAsync();
         FormClosing += (_, _) => _closing.Cancel();
+        ResumeLayout(true);
     }
 
     private async Task StartAsync()
@@ -174,6 +177,7 @@ internal sealed class LauncherForm : Form
         {
             Text = "OEPS KiCad Production Files — update available",
             ClientSize = new Size(440, 190), Font = Font,
+            AutoScaleDimensions = new SizeF(96f, 96f),
             AutoScaleMode = AutoScaleMode.Dpi,
             FormBorderStyle = FormBorderStyle.FixedDialog,
             MaximizeBox = false, MinimizeBox = false,
@@ -206,6 +210,12 @@ internal sealed class LauncherForm : Form
         var eventName = @"Local\OEPS.KicadProductionFiles.Ready." + Guid.NewGuid().ToString("N");
         using var ready = new EventWaitHandle(false, EventResetMode.ManualReset, eventName);
         var start = new ProcessStartInfo(executable) { WorkingDirectory = Path.GetDirectoryName(executable)!, UseShellExecute = false };
+        var bundledRuntime = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "runtime"));
+        if (File.Exists(Path.Combine(bundledRuntime, "dotnet.exe")))
+        {
+            start.Environment["DOTNET_ROOT_X64"] = bundledRuntime;
+            start.Environment["DOTNET_ROOT"] = bundledRuntime;
+        }
         start.ArgumentList.Add("--startup-ready");
         start.ArgumentList.Add(eventName);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Windows could not start the app.");

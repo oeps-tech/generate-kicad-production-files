@@ -7,6 +7,6 @@ public sealed class ComponentIdentifiersCheck : IFileCheck
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(new CheckResult(Name, CheckStatus.Pending,
-            "Not implemented yet. Component field rules will be added to report missing identifiers and pairings that do not match the spreadsheet."));
+            "Generate production files to validate OEPS PN and MPN from the newly exported BOM against the database and layout."));
     }
 }

@@ -70,7 +70,7 @@ public sealed class RevisionCheck : IFileCheck
             try { actual = RevisionValue.Normalize(savedText); }
             catch (InvalidDataException)
             {
-                return new(CheckName, CheckStatus.Failed, $"Set {RevisionPath} to '{expected}'; the saved revision is empty or has no value after its 'Rev' prefix.");
+                return new(CheckName, CheckStatus.Failed, $"Set {RevisionPath} to '{expected}'; the saved revision is empty or has no value after its revision prefix.");
             }
 
             return actual == expected

@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text;
 using Oeps.KicadProductionFiles.Core.Checks;
+using Oeps.KicadProductionFiles.Core.CheckProductionFiles;
 using Oeps.KicadProductionFiles.Core.CheckFilesConfiguration;
 using Oeps.KicadProductionFiles.Core.Configuration;
 using Oeps.KicadProductionFiles.Core.ConfigureFiles;
@@ -25,7 +26,7 @@ public sealed class MainForm : Form
     private readonly ToolTip _toolTip = new() { AutoPopDelay = 20000 };
     private readonly TextBox _cli = PathBox("KiCad CLI path", "Select kicad-cli.exe");
     private readonly TextBox _project = PathBox("KiCad files path", "Select the project folder");
-    private readonly TextBox _revision = PathBox("Revision", "revB");
+    private readonly TextBox _revision = PathBox("Revision", "revB / v1.2");
     private readonly Button _browseCli = BrowseButton("Browse for KiCad CLI");
     private readonly Button _browseProject = BrowseButton("Browse for KiCad files");
     private readonly Button _refresh = ActionButton("&Update database");
@@ -38,12 +39,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _generatePlacements = GenerationOption("Generate placement files", true);
     private readonly CheckBox _generateDrills = GenerationOption("Generate drill files", true);
     private readonly CheckBox _generateIpcD356 = GenerationOption("Generate IPC-D-356 netlist", true);
-    private readonly TextBox _report = new()
-    {
-        Multiline = true, ReadOnly = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical,
-        BorderStyle = BorderStyle.None, BackColor = Color.White, ForeColor = Color.FromArgb(32, 44, 58),
-        AccessibleName = "Check report", WordWrap = true, Margin = new Padding(0, 8, 0, 0)
-    };
+    private readonly ReportTextBox _report = new();
     private readonly Label _jobStatus = new() { Dock = DockStyle.Fill, ForeColor = Muted, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly Label _syncStatus = new() { Dock = DockStyle.Fill, ForeColor = Muted, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly Label _syncIndicator = new() { Text = "●", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft };
@@ -71,10 +67,10 @@ public sealed class MainForm : Form
         if (args.Contains("--ui-smoke")) { ShowInTaskbar = false; Opacity = 0; }
         Font = new Font("Segoe UI", 10f);
         BackColor = Color.FromArgb(248, 250, 252);
-        AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
+        AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(_settings.WindowWidth, Math.Max(720, _settings.WindowHeight));
-        MinimumSize = SizeFromClientSize(new Size(560, 720));
+        MinimumSize = SizeFromClientSize(new Size(560, 500));
         StartPosition = FormStartPosition.CenterScreen;
         if (_settings.WindowX is int x && _settings.WindowY is int y && Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(new Rectangle(x, y, 100, 100))))
         { StartPosition = FormStartPosition.Manual; Location = new Point(x, y); }
@@ -111,6 +107,7 @@ public sealed class MainForm : Form
         };
         Shown += async (_, _) =>
         {
+            FitWindowToScreen();
             AppInstanceCoordinator.SignalReadyFromArguments(args);
             _project.Focus();
             if (args.Contains("--ui-smoke")) { await RunUiSmokeAsync(); return; }
@@ -154,10 +151,13 @@ public sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6,
-            Padding = new Padding(16, 12, 16, 10), Margin = Padding.Empty };
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(16, 12, 16, 10) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, RowCount = 6,
+            MinimumSize = new Size(0, 663), Margin = Padding.Empty };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        foreach (var height in new[] { 156, 12, 88, 186, 30 }) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        foreach (var height in new[] { 156, 12, 88 }) layout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var fields = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3,
             BackColor = Color.White, Padding = new Padding(12), Margin = Padding.Empty };
@@ -189,7 +189,7 @@ public sealed class MainForm : Form
             Color.FromArgb(199, 207, 217), ButtonBorderStyle.Solid);
         revisionFrame.Controls.Add(_revision);
         revisionRow.Controls.Add(revisionFrame, 0, 0);
-        revisionRow.Controls.Add(new Label { Text = "e.g. revA, RevB, B", Dock = DockStyle.Fill,
+        revisionRow.Controls.Add(new Label { Text = "e.g. RevB, B, ver1.3, v1.3.2, 1.3.2", Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft, ForeColor = Muted, Margin = new Padding(10, 0, 0, 0) }, 1, 0);
         fields.Controls.Add(revisionRow, 1, 2); fields.SetColumnSpan(revisionRow, 2);
         layout.Controls.Add(fields, 0, 0);
@@ -223,14 +223,29 @@ public sealed class MainForm : Form
         footer.Controls.Add(_syncIndicator, 0, 0); footer.Controls.Add(_syncStatus, 1, 0);
         footer.Controls.Add(new Label { Text = $"│  v{_version}", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 2, 0);
         _updateStatus.Anchor = AnchorStyles.Right; footer.Controls.Add(_updateStatus, 3, 0);
-        Controls.Add(layout); Controls.Add(footer);
+        scroll.Controls.Add(layout); Controls.Add(scroll); Controls.Add(footer);
+        // Keep a readable report area when the window is shorter than the content.
+        // MinimumSize and row heights scale with WinForms; never reapply unscaled pixels after a DPI change.
+        void FitContent() => layout.Height = Math.Max(layout.MinimumSize.Height, scroll.ClientSize.Height - scroll.Padding.Vertical);
+        scroll.ClientSizeChanged += (_, _) => FitContent();
+        DpiChanged += (_, _) => BeginInvoke((Action)FitContent);
+        FitContent();
         _toolTip.SetToolTip(_cli, "Path to kicad-cli.exe. An installed KiCad CLI is detected automatically when available.");
         _toolTip.SetToolTip(_project, "Project folder containing the .kicad_pro settings, main .kicad_sch schematic and .kicad_pcb board.");
-        _toolTip.SetToolTip(_revision, "Expected revision. B, RevB and revB are equivalent; surrounding spaces are ignored.");
-        _toolTip.SetToolTip(_check, "Check the saved Symbol Fields Table fields, Edit tab metadata, export configuration, field order, revision and PCB Gerber plot settings.");
+        _toolTip.SetToolTip(_revision, "Expected revision: RevB = B; ver1.2 = v1.2 = 1.2; Ver2 = 2; v1.3.3 = 1.3.3. Case and surrounding spaces are ignored. Fixes write the value without its prefix.");
+        _toolTip.SetToolTip(_check, "Check the saved Symbol Fields Table fields, Edit tab metadata, export configuration, field order, revision, PCB silkscreen revision and Gerber plot settings.");
         _toolTip.SetToolTip(_configure, "Recheck the project and confirm each failed configuration fix separately.");
-        _toolTip.SetToolTip(_generate, "Generate the selected production files using KiCad CLI.");
+        _toolTip.SetToolTip(_generate, "Generate the BOM first, then the selected production files using KiCad CLI.");
         _toolTip.SetToolTip(_deleteBeforeGeneration, "When selected, clear the project's manufacturing folder first. When clear, keep unrelated files and replace matching generated filenames.");
+    }
+
+    private void FitWindowToScreen()
+    {
+        if (WindowState != FormWindowState.Normal) return;
+        var area = Screen.FromControl(this).WorkingArea;
+        MinimumSize = new Size(Math.Min(MinimumSize.Width, area.Width), Math.Min(MinimumSize.Height, area.Height));
+        Size = new Size(Math.Min(Width, area.Width), Math.Min(Height, area.Height));
+        Location = new Point(Math.Clamp(Left, area.Left, area.Right - Width), Math.Clamp(Top, area.Top, area.Bottom - Height));
     }
 
     private static string DetectCli()
@@ -278,15 +293,14 @@ public sealed class MainForm : Form
         { _jobStatus.Text = "Could not save preferences: " + ex.Message; _toolTip.SetToolTip(_jobStatus, _jobStatus.Text); }
     }
 
-    private void ShowReport(string title, string detail)
+    private void ShowReport(string title, string detail, bool? allPassed = null)
     {
         _reportRevision++;
-        _report.Text = (title + "\n\n" + detail).ReplaceLineEndings("\r\n");
-        _report.SelectionStart = 0; _report.SelectionLength = 0; _report.ScrollToCaret();
+        _report.ShowReport(title, detail, allPassed);
     }
 
     private void ShowReadyReport() => ShowReport("Ready",
-        "Select the folder containing your KiCad project and enter the expected revision.\n\nCheck files configuration verifies the Symbol Fields Table fields, Edit tab metadata, export configuration, field order, revision and PCB Gerber plot settings.\n\nSave any changes in KiCad before running the check.");
+        "Select KiCad CLI, the folder containing your KiCad project and the expected revision.\n\nCheck files configuration verifies the Symbol Fields Table, export settings, revision, PCB silkscreen revision and Gerber plot settings. It also checks BOM identifiers against the database using a temporary CLI export of the schematic hierarchy.\n\nSave any changes in KiCad before running the check.");
 
     private async Task RefreshAsync(bool manual = false)
     {
@@ -315,7 +329,7 @@ public sealed class MainForm : Form
     }
 
     private CheckContext CreateCheckContext() => new(_settings.KicadCliPath, _settings.ProjectDirectory,
-        Revision: _settings.Revision);
+        Revision: _settings.Revision) { Database = _repository.Components.ToArray() };
 
     private async Task CheckAsync()
     {
@@ -324,13 +338,13 @@ public sealed class MainForm : Form
         _checkRequested = true; _configurationPassed = false;
         UpdateButtons();
         _jobStatus.Text = "Checking files configuration…";
-        ShowReport("Checking files configuration…", "Checking the saved Symbol Fields Table settings.");
+        ShowReport("Checking files configuration…", "Checking saved settings and exporting a temporary BOM to validate identifiers against the database…");
         var context = CreateCheckContext();
         try
         {
             var report = await new ConfigurationCheckRunner().RunAsync(context, _closing.Token);
             if (_closing.IsCancellationRequested) return;
-            _configurationPassed = report.Entries.Count > 0 && !report.HasFailures && !report.HasPendingChecks;
+            _configurationPassed = report.AllPassed;
             ShowCheckReport(report);
             _jobStatus.Text = report.HasFailures ? "Configuration needs attention. See report." : "Configuration checks passed. Everything is good.";
         }
@@ -338,7 +352,7 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             if (_closing.IsCancellationRequested) return;
-            ShowReport("Check failed", ex.Message); _jobStatus.Text = "Check could not finish. See report.";
+            ShowReport("Check failed", ex.Message, false); _jobStatus.Text = "Check could not finish. See report.";
         }
         finally { _checking = false; if (!IsDisposed && !_closing.IsCancellationRequested) UpdateButtons(); }
     }
@@ -359,12 +373,12 @@ public sealed class MainForm : Form
             {
                 var status = action.Status == FixActionStatus.Failed ? "FIX FAILED" : action.Status.ToString().ToUpperInvariant();
                 text.AppendLine($"[{status}] {action.CheckName}");
-                if (action.Status == FixActionStatus.Failed) text.AppendLine(action.Detail);
+                if (action.Status == FixActionStatus.Failed || action.CheckName == new OepsDescriptionFix().CheckName) text.AppendLine(action.Detail);
             }
             if (actions.Any(action => action.Status == FixActionStatus.Fixed))
                 text.AppendLine("Original files were saved in .oeps-backups.");
         }
-        ShowReport(report.Summary, text.ToString());
+        ShowReport(report.Summary, text.ToString(), report.AllPassed && !(actions?.Any(action => action.Status == FixActionStatus.Failed) ?? false));
     }
 
     private async Task ConfigureAsync(Func<ConfigurationFixPrompt, CancellationToken, Task<bool>>? confirmAsync = null)
@@ -380,9 +394,10 @@ public sealed class MainForm : Form
             var result = await new ConfigurationFixRunner().RunAsync(
                 CreateCheckContext(), confirmAsync ?? ConfirmFixAsync, _closing.Token);
             if (_closing.IsCancellationRequested) return;
-            _configurationPassed = result.Checks.Entries.Count > 0 && !result.Checks.HasFailures && !result.Checks.HasPendingChecks;
+            _configurationPassed = result.Checks.AllPassed;
             ShowCheckReport(result.Checks, result.Actions);
-            _jobStatus.Text = result.Actions.Count == 0 ? "All checks passed. No fixes needed." :
+            _jobStatus.Text = result.Actions.Count == 0
+                ? (result.Checks.HasFailures ? "Some checks failed and have no automatic fix. See report." : "All checks passed. No fixes needed.") :
                 $"Configuration finished: {result.Actions.Count(action => action.Status == FixActionStatus.Fixed)} fixed, " +
                 $"{result.Actions.Count(action => action.Status == FixActionStatus.Skipped)} skipped, " +
                 $"{result.Actions.Count(action => action.Status == FixActionStatus.Failed)} could not be fixed.";
@@ -391,7 +406,7 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             if (_closing.IsCancellationRequested) return;
-            ShowReport("Configuration could not finish", ex.Message);
+            ShowReport("Configuration could not finish", ex.Message, false);
             _jobStatus.Text = "Configuration could not finish. Run Check files configuration again.";
         }
         finally { _configuring = false; if (!IsDisposed && !_closing.IsCancellationRequested) UpdateButtons(); }
@@ -400,19 +415,22 @@ public sealed class MainForm : Form
     private Task<bool> ConfirmFixAsync(ConfigurationFixPrompt prompt, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (prompt.Failure.Name == new OepsDescriptionFix().CheckName)
+        {
+            using var dialog = new DescriptionFixConfirmationDialog(prompt, this);
+            return Task.FromResult(dialog.ShowDialog(this) == DialogResult.Yes);
+        }
         var answer = MessageBox.Show(this,
             $"[FAILED] {prompt.Failure.Name}\n\n{prompt.Failure.Detail}\n\nProposed fix:\n{prompt.Description}\n\nFix this configuration now?",
             "Configure files — " + prompt.Failure.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
         return Task.FromResult(answer == DialogResult.Yes);
     }
 
-    private async Task GenerateAsync(Func<bool>? confirmGerbers = null)
+    private async Task GenerateAsync(Func<bool>? confirmGerbers = null, Action<BomPlacementComparison>? showCountMismatch = null)
     {
         if (_checking || _configuring || _generating || _closing.IsCancellationRequested) return;
         var options = new ProductionGenerationOptions(_deleteBeforeGeneration.Checked, _generateGerbers.Checked,
             _generatePlacements.Checked, _generateDrills.Checked, _generateIpcD356.Checked);
-        if (!options.GenerateGerbers && !options.GeneratePlacements && !options.GenerateDrills && !options.GenerateIpcD356)
-        { _jobStatus.Text = "Select at least one file type to generate."; return; }
         if (options.GenerateGerbers && !(confirmGerbers ?? ConfirmGerberGeneration)())
         { _jobStatus.Text = "Generation cancelled. No production files were changed."; return; }
         SavePaths();
@@ -427,7 +445,8 @@ public sealed class MainForm : Form
         try
         {
             var context = CreateCheckContext();
-            var result = await Task.Run(() => new ProductionGenerationRunner().RunAsync(context, progress, _closing.Token, options), _closing.Token);
+            var database = _repository.Components;
+            var result = await Task.Run(() => new ProductionGenerationRunner().RunAsync(context, progress, _closing.Token, options, database), _closing.Token);
             if (_closing.IsCancellationRequested) return;
             var report = new StringBuilder();
             if (result.ManufacturingCleared) report.AppendLine("Manufacturing folder cleared.").AppendLine();
@@ -438,19 +457,48 @@ public sealed class MainForm : Form
                 if (file.ComponentCount is int componentCount) report.AppendLine($"Component count: {componentCount}");
                 report.AppendLine();
             }
+            if (result.Comparison is { } comparison)
+            {
+                report.AppendLine($"[{(comparison.Matches ? "PASSED" : "FAILED")}] BOM / placement comparison");
+                if (!comparison.Matches)
+                {
+                    report.AppendLine($"BOM component count: {comparison.BomCount}");
+                    report.AppendLine($"Placement component count: {comparison.PlacementCount}");
+                    report.AppendLine("In BOM but not in placement files: " + (comparison.OnlyInBom.Count == 0 ? "None" : string.Join(", ", comparison.OnlyInBom)));
+                    report.AppendLine("In placement files but not in BOM: " + (comparison.OnlyInPlacement.Count == 0 ? "None" : string.Join(", ", comparison.OnlyInPlacement)));
+                }
+                report.AppendLine();
+            }
+            foreach (var check in result.Checks)
+            {
+                report.AppendLine($"[{check.Status.ToString().ToUpperInvariant()}] {check.Name}");
+                if (check.Status != CheckStatus.Passed) report.AppendLine(check.Detail);
+                report.AppendLine();
+            }
             if (!result.Success) report.AppendLine("[FAILED] Production generation").AppendLine(result.Error);
-            ShowReport(result.Success ? "Production files generated" : "Production generation failed", report.ToString());
-            _jobStatus.Text = result.Success ? "Selected production files generated successfully." : "Generation failed. See report.";
+            var checksFailed = result.Checks.Any(check => check.Status != CheckStatus.Passed);
+            ShowReport(!result.Success ? "Production generation failed" : checksFailed
+                ? "Production files generated; checks failed" : "Production files generated", report.ToString(),
+                result.Success && result.Checks.Count > 0 && !checksFailed && result.Comparison is not { Matches: false });
+            _jobStatus.Text = !result.Success ? "Generation failed. See report."
+                : checksFailed ? "Files generated, but component checks failed. See report."
+                : result.Comparison is { Matches: false } ? "Files generated, but BOM and placement components differ. See report."
+                : "Production files generated successfully.";
+            if (result.Comparison is { CountsMatch: false } mismatch)
+                (showCountMismatch ?? ShowComponentCountMismatch)(mismatch);
         }
         catch (OperationCanceledException) when (_closing.IsCancellationRequested) { }
         catch (Exception ex)
         {
             if (_closing.IsCancellationRequested) return;
-            ShowReport("Production generation failed", ex.Message);
+            ShowReport("Production generation failed", ex.Message, false);
             _jobStatus.Text = "Generation failed. See report.";
         }
         finally { _generating = false; if (!IsDisposed && !_closing.IsCancellationRequested) UpdateButtons(); }
     }
+
+    private void ShowComponentCountMismatch(BomPlacementComparison comparison) => MessageBox.Show(this,
+        comparison.CountMessage, "BOM / placement component count mismatch", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
     private bool ConfirmGerberGeneration() => MessageBox.Show(this,
         "Before generating the Gerber files, open the board and:\n\n" +
@@ -462,8 +510,7 @@ public sealed class MainForm : Form
         _refresh.Enabled = !_refreshing && !_checking && !_configuring && !_generating;
         _check.Enabled = !_checking && !_configuring && !_generating;
         _configure.Enabled = _checkRequested && !_configuring && !_generating;
-        _generate.Enabled = !_checking && !_configuring && !_generating && (_generateWithErrors.Checked || _configurationPassed)
-            && (_generateGerbers.Checked || _generatePlacements.Checked || _generateDrills.Checked || _generateIpcD356.Checked);
+        _generate.Enabled = !_checking && !_configuring && !_generating && (_generateWithErrors.Checked || _configurationPassed);
         foreach (var option in new[] { _generateWithErrors, _deleteBeforeGeneration, _generateGerbers, _generatePlacements, _generateDrills, _generateIpcD356 })
             option.Enabled = !_checking && !_configuring && !_generating;
         _generate.BackColor = _generate.Enabled ? Accent : Color.FromArgb(224, 230, 237);
@@ -525,12 +572,72 @@ public sealed class MainForm : Form
             if (_revision.PointToScreen(Point.Empty).Y <= _project.PointToScreen(Point.Empty).Y)
                 throw new Exception("Revision entry must be below the KiCad files entry.");
             results.Add("PASS matching icon, two path fields, revision entry and 2x2 actions");
+            Directory.CreateDirectory(_paths.UserDataRoot);
+            foreach (var choice in new[] { DialogResult.No, DialogResult.Yes })
+            {
+                var proposal = string.Join("\n", Enumerable.Range(1, 60).Select(index => $"C{index}: Capacitor description from the verified database pair"));
+                using var confirmation = new DescriptionFixConfirmationDialog(new(
+                    new(new OepsDescriptionFix().CheckName, CheckStatus.Failed, "Missing OEPS Description."), proposal), this) { Opacity = 0 };
+                confirmation.Shown += (_, _) =>
+                {
+                    if (!confirmation.Details.ReadOnly || !confirmation.Details.Text.Contains("C60:")
+                        || confirmation.AcceptButton != confirmation.NoButton || confirmation.CancelButton != confirmation.NoButton)
+                        throw new Exception("Description confirmation must retain the full proposal and default to No.");
+                    var buttonBottom = confirmation.PointToClient(confirmation.NoButton.PointToScreen(new Point(0, confirmation.NoButton.Height))).Y;
+                    if (buttonBottom > confirmation.ClientSize.Height) throw new Exception("Confirmation buttons are clipped.");
+                    using var screenshot = new Bitmap(confirmation.Width, confirmation.Height);
+                    confirmation.DrawToBitmap(screenshot, new Rectangle(Point.Empty, confirmation.Size));
+                    screenshot.Save(Path.Combine(_paths.UserDataRoot, "description-fix-confirmation.png"));
+                    confirmation.BeginInvoke(() => (choice == DialogResult.Yes ? confirmation.YesButton : confirmation.NoButton).PerformClick());
+                };
+                if (confirmation.ShowDialog(this) != choice) throw new Exception("Description confirmation returned the wrong choice.");
+            }
+            results.Add("PASS scrollable description-fix proposal, visible buttons, default No and Yes/No confirmation results");
+            var exampleBom = new BomData(["OEPS PN", "MPN", "OEPS Description"],
+                [new("C1", new Dictionary<string, string> { ["OEPS PN"] = "OEPS0012", ["MPN"] = "" })]);
+            var exampleFields = new BomIdentifiersCheck().Run(exampleBom);
+            var exampleLayout = new BomLayoutIdentifiersCheck().Compare(exampleBom, exampleBom.Components);
+            ShowCheckReport(new([new("Edit Tab metadata", CheckStatus.Passed, ""), exampleFields, exampleLayout])
+                { Title = "Component check preview" });
+            void ExpectMarker(string header, char symbol, Color color)
+            {
+                var index = _report.Text.IndexOf(symbol + " " + header, StringComparison.Ordinal);
+                if (index < 0) throw new Exception("Missing coloured status marker for " + header);
+                _report.Select(index, 1);
+                if (_report.SelectionColor.ToArgb() != color.ToArgb()) throw new Exception("Incorrect marker colour for " + header);
+                _report.Select(index + 2, header.Length);
+                if (_report.SelectionColor.ToArgb() != _report.ForeColor.ToArgb()) throw new Exception("Status colour leaked into the report text.");
+                _report.Select(0, 0);
+            }
+            ExpectMarker("[PASSED] Edit Tab metadata", '✓', ReportTextBox.PassedColor);
+            ExpectMarker("[FAILED] Not all tests passed", '✗', ReportTextBox.FailedColor);
+            if (!_report.Text.StartsWith("✗ [FAILED] Not all tests passed", StringComparison.Ordinal))
+                throw new Exception("Overall failure must be the first report line.");
+            ExpectMarker("[FAILED] BOM required fields: OEPS PN, MPN and OEPS Description", '✗', ReportTextBox.FailedColor);
+            ExpectMarker("[FAILED] BOM vs layout: footprints, OEPS PN, MPN and OEPS Description", '✗', ReportTextBox.FailedColor);
+            if (!_report.ReadOnly || !_report.Text.Contains("'C1': Missing MPN.") || !_report.Text.Contains("'C1': layout: Missing MPN.")
+                || !_report.Text.Contains("'C1': Missing OEPS Description.") || !_report.Text.Contains("'C1': layout: Missing OEPS Description.")
+                || _report.Text.Contains("BOM: Missing")) throw new Exception("BOM and layout failures were not separated.");
+            Directory.CreateDirectory(_paths.UserDataRoot);
+            await File.WriteAllTextAsync(Path.Combine(_paths.UserDataRoot, "split-checks-report.txt"), _report.Text);
+            using (var statusScreenshot = new Bitmap(Width, Height))
+            {
+                DrawToBitmap(statusScreenshot, new Rectangle(Point.Empty, Size));
+                statusScreenshot.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke-status-symbols.png"));
+            }
+            ShowReadyReport();
+            if (_report.Text.Contains("All tests passed") || _report.Text.Contains("Not all tests passed"))
+                throw new Exception("Neutral reports must clear the previous overall result.");
+            _report.SelectAll();
+            if (_report.SelectionColor.ToArgb() != _report.ForeColor.ToArgb()) throw new Exception("New report inherited an old status colour.");
+            _report.Select(0, 0);
+            results.Add("PASS separate BOM/layout failures, green check/red X glyph colours, plain text colours, selection and report reset");
             ExpectButtons(false, false, "at startup");
             if (!_refresh.Enabled || !_check.Enabled || _generateWithErrors.Checked)
                 throw new Exception("Startup buttons or default override are incorrect.");
             if (!_deleteBeforeGeneration.Checked || !_generateGerbers.Checked || !_generatePlacements.Checked || !_generateDrills.Checked || !_generateIpcD356.Checked)
                 throw new Exception("Generation selections must default to true.");
-            if (_generateWithErrors.Parent!.Right < ClientSize.Width - 40 || _generateDrills.Top <= _generatePlacements.Top
+            if (_generateWithErrors.Parent!.PointToScreen(new Point(_generateWithErrors.Parent.Width, 0)).X < PointToScreen(new Point(ClientSize.Width - (int)(40 * DeviceDpi / 96f), 0)).X || _generateDrills.Top <= _generatePlacements.Top
                 || _generateWithErrors.Parent.Bottom > _jobStatus.Top)
                 throw new Exception("Generation options must be stacked on the right without overlapping the report.");
             foreach (var option in new[] { _generateWithErrors, _deleteBeforeGeneration, _generateGerbers, _generatePlacements, _generateDrills, _generateIpcD356 })
@@ -564,10 +671,15 @@ public sealed class MainForm : Form
             File.Copy(Path.Combine(AppContext.BaseDirectory, "samples", "configured-project.kicad_sch"), Path.ChangeExtension(fixture, ".kicad_sch"));
             File.Copy(Path.Combine(AppContext.BaseDirectory, "samples", "placement-test.kicad_pcb"), Path.ChangeExtension(fixture, ".kicad_pcb"));
             _project.Text = fixtureDirectory;
+            _cli.Text = DetectCli();
             _revision.Text = "revB";
             ExpectButtons(false, false, "after changing the project path");
             await CheckAsync();
             ExpectButtons(true, true, "after passing all configuration checks");
+            ExpectMarker("[PASSED] All tests passed", '✓', ReportTextBox.PassedColor);
+            if (!_report.Text.StartsWith("✓ [PASSED] All tests passed", StringComparison.Ordinal)
+                || !_report.Text.Contains("[PASSED] Schematic BOM OEPS PN / MPN / Description database validation"))
+                throw new Exception("Overall success or the CLI BOM check is missing.");
             _generateWithErrors.Checked = true; _generateWithErrors.Checked = false;
             ExpectButtons(true, true, "after clearing override with a valid check");
             await RefreshAsync(manual: true);
@@ -614,6 +726,9 @@ public sealed class MainForm : Form
             await ConfigureAsync((_, _) => throw new Exception("A passing check should not prompt for a fix."));
             results.Add("PASS separate confirmation, No preserving bytes, Yes applying the fix and backup, automatic recheck, and no prompt for passing checks");
             _revision.Text = "RevA";
+            // Silkscreen placement is a manual operation, separate from the metadata fix below.
+            var revisionBoard = Path.ChangeExtension(fixture, ".kicad_pcb");
+            await File.WriteAllTextAsync(revisionBoard, (await File.ReadAllTextAsync(revisionBoard)).Replace("RevB", "RevA"));
             ExpectButtons(false, false, "after changing the expected revision");
             await CheckAsync();
             ExpectButtons(true, false, "after a revision mismatch");
@@ -695,6 +810,19 @@ public sealed class MainForm : Form
                 plotScreenshot.Save(Path.Combine(_paths.UserDataRoot, "ui-smoke-gerber-settings.png"));
             }
             results.Add("PASS PCB Gerber plot check, declined/approved fix, board text preservation, backup and automatic recheck");
+            var wrongSilkscreen = originalBoardText.Replace("RevA", "RevZ");
+            await File.WriteAllTextAsync(fixtureBoard, wrongSilkscreen);
+            await CheckAsync();
+            ExpectButtons(true, false, "after a PCB silkscreen revision failure");
+            await ConfigureAsync((_, _) => throw new Exception("Silkscreen revision must not offer an automatic fix."));
+            if (!_report.Text.Contains("[FAILED] PCB silkscreen revision") || _jobStatus.Text.Contains("All checks passed")
+                || await File.ReadAllTextAsync(fixtureBoard) != wrongSilkscreen)
+                throw new Exception("Read-only silkscreen failure report or board preservation failed.");
+            await File.WriteAllTextAsync(Path.Combine(_paths.UserDataRoot, "silkscreen-revision-report.txt"), _report.Text);
+            await File.WriteAllTextAsync(fixtureBoard, originalBoardText);
+            await CheckAsync();
+            ExpectButtons(true, true, "after manually correcting the silkscreen revision");
+            results.Add("PASS silkscreen PASS/FAIL, no fix prompt, unchanged PCB, accurate status and recheck after manual correction");
             var preservedOnCancel = Path.Combine(fixtureDirectory, "manufacturing", "preserve-on-cancel.txt");
             Directory.CreateDirectory(Path.GetDirectoryName(preservedOnCancel)!);
             await File.WriteAllTextAsync(preservedOnCancel, "keep");
@@ -703,7 +831,7 @@ public sealed class MainForm : Form
             if (reminderCalls != 1 || !_jobStatus.Text.Contains("cancelled") || await File.ReadAllTextAsync(preservedOnCancel) != "keep")
                 throw new Exception("Gerber reminder cancellation failed.");
             _generateGerbers.Checked = _generatePlacements.Checked = _generateDrills.Checked = _generateIpcD356.Checked = false;
-            ExpectButtons(true, false, "with no exports selected");
+            ExpectButtons(true, true, "with only the automatic BOM export selected");
             _generateGerbers.Checked = _generatePlacements.Checked = _generateDrills.Checked = _generateIpcD356.Checked = true;
             ExpectButtons(true, true, "with exports selected again");
             results.Add("PASS generation selection and Gerber reminder cancellation");
@@ -714,7 +842,15 @@ public sealed class MainForm : Form
                 var obsolete = Path.Combine(fixtureDirectory, "manufacturing", "old", "old.txt");
                 Directory.CreateDirectory(Path.GetDirectoryName(obsolete)!);
                 await File.WriteAllTextAsync(obsolete, "obsolete manufacturing data");
-                var generation = GenerateAsync(() => true);
+                var mismatchCalls = 0;
+                void ExpectMismatch(BomPlacementComparison comparison)
+                {
+                    mismatchCalls++;
+                    if (comparison.BomCount != 0 || comparison.PlacementCount != 5 || comparison.CountsMatch
+                        || comparison.OnlyInBom.Count != 0 || !comparison.OnlyInPlacement.SequenceEqual(new[] { "B1", "D1", "E1", "S1", "T1" }))
+                        throw new Exception("Incorrect BOM / placement mismatch notification.");
+                }
+                var generation = GenerateAsync(() => true, ExpectMismatch);
                 ExpectButtons(false, false, "during production generation");
                 if (_project.Enabled || _revision.Enabled || _check.Enabled || _generateGerbers.Enabled || _deleteBeforeGeneration.Enabled)
                     throw new Exception("Inputs must be locked during generation.");
@@ -723,7 +859,7 @@ public sealed class MainForm : Form
                 if (!_report.Text.Contains("[GENERATED] IPC-D-356 netlist") || !File.Exists(ipcPath)
                     || !(await File.ReadAllTextAsync(ipcPath)).TrimEnd().EndsWith("999", StringComparison.Ordinal))
                     throw new Exception("IPC-D-356 netlist generation failed: " + _report.Text);
-                if (_report.Text.Contains("[FAILED]") || !_report.Text.Contains("[GENERATED] Gerber files") || !_report.Text.Contains("[GENERATED] Drill files"))
+                if (_report.Text.Contains("[FAILED] Production generation") || !_report.Text.Contains("[GENERATED] Gerber files") || !_report.Text.Contains("[GENERATED] Drill files"))
                     throw new Exception("Gerber/drill generation failed: " + _report.Text);
                 var gerberDirectory = Path.Combine(fixtureDirectory, "manufacturing", "gerber");
                 if (Directory.GetFiles(gerberDirectory, "*.gbrjob").Length != 0)
@@ -736,6 +872,22 @@ public sealed class MainForm : Form
                 if (!_report.Text.Contains("[GENERATED] Placement files") || !File.Exists(output) || File.Exists(obsolete))
                     throw new Exception("Placement generation or manufacturing cleanup failed: " + _report.Text);
                 if (!_report.Text.Contains("Component count: 5")) throw new Exception("Placement component count is missing or incorrect.");
+                var identifierReport = _report.Text.ReplaceLineEndings("\n");
+                ExpectMarker("[PASSED] BOM required fields: OEPS PN, MPN and OEPS Description", '✓', ReportTextBox.PassedColor);
+                ExpectMarker("[FAILED] BOM / placement comparison", '✗', ReportTextBox.FailedColor);
+                ExpectMarker("[FAILED] Not all tests passed", '✗', ReportTextBox.FailedColor);
+                if (!_report.Text.StartsWith("✗ [FAILED] Not all tests passed", StringComparison.Ordinal))
+                    throw new Exception("A BOM/placement mismatch must make the overall result fail.");
+                if (!identifierReport.Contains("✓ [PASSED] BOM required fields: OEPS PN, MPN and OEPS Description\n\n")
+                    || !identifierReport.Contains("✓ [PASSED] BOM vs database: OEPS PN, MPN and OEPS Description\n\n")
+                    || !identifierReport.Contains("✓ [PASSED] BOM vs layout: footprints, OEPS PN, MPN and OEPS Description\n\n"))
+                    throw new Exception("The production identifier checks must have separate headers and no detail when passing: " + _report.Text);
+                if (mismatchCalls != 1 || !_report.Text.Contains("[GENERATED] BOM") || !_report.Text.Contains("Component count: 0")
+                    || !_report.Text.Contains("[FAILED] BOM / placement comparison")
+                    || !_report.Text.Contains("In BOM but not in placement files: None")
+                    || !_report.Text.Contains("In placement files but not in BOM: B1, D1, E1, S1, T1")
+                    || _report.Text.IndexOf("[GENERATED] BOM", StringComparison.Ordinal) > _report.Text.IndexOf("[GENERATED] Gerber", StringComparison.Ordinal))
+                    throw new Exception("Automatic BOM export, mismatch notification or reference difference report failed.");
                 var csv = await File.ReadAllTextAsync(output);
                 foreach (var reference in new[] { "S1", "T1", "D1", "E1", "B1" })
                     if (!csv.Contains("\"" + reference + "\"")) throw new Exception("Requested placement type missing: " + reference);
@@ -750,18 +902,28 @@ public sealed class MainForm : Form
                 _generateGerbers.Checked = _generateDrills.Checked = _generateIpcD356.Checked = false;
                 await File.WriteAllTextAsync(preservedOnCancel, "keep");
                 var drillBefore = await File.ReadAllBytesAsync(Path.Combine(gerberDirectory, "sample-PTH.drl"));
-                await GenerateAsync(() => throw new Exception("Placement-only export must not show the Gerber reminder."));
+                await GenerateAsync(() => throw new Exception("BOM and placement export must not show the Gerber reminder."), ExpectMismatch);
                 var drillAfter = await File.ReadAllBytesAsync(Path.Combine(gerberDirectory, "sample-PTH.drl"));
-                if (_report.Text.Contains("[FAILED]") || await File.ReadAllTextAsync(preservedOnCancel) != "keep"
+                if (_report.Text.Contains("[FAILED] Production generation") || mismatchCalls != 2 || await File.ReadAllTextAsync(preservedOnCancel) != "keep"
                     || !drillBefore.SequenceEqual(drillAfter))
                     throw new Exception("Selective generation with cleanup disabled changed unrelated outputs.");
                 _deleteBeforeGeneration.Checked = _generateGerbers.Checked = _generateDrills.Checked = _generateIpcD356.Checked = true;
                 results.Add("PASS placement-only export skips reminder and preserves other files when cleanup is disabled");
                 _deleteBeforeGeneration.Checked = _generateGerbers.Checked = _generatePlacements.Checked = _generateDrills.Checked = false;
-                await GenerateAsync(() => throw new Exception("IPC-only export must not show the Gerber reminder."));
+                await GenerateAsync(() => throw new Exception("BOM and IPC export must not show the Gerber reminder."),
+                    _ => throw new Exception("Must not compare an old placement file when placement export is unchecked."));
                 if (!_report.Text.Contains("[GENERATED] IPC-D-356 netlist") || _report.Text.Contains("[FAILED]")
-                    || _report.Text.Contains("[GENERATED] Placement files"))
+                    || _report.Text.Contains("[GENERATED] Placement files") || _report.Text.Contains("BOM / placement comparison"))
                     throw new Exception("IPC-only generation did not honor the selection.");
+                _generateIpcD356.Checked = false;
+                await GenerateAsync(() => throw new Exception("BOM-only export must not show the Gerber reminder."),
+                    _ => throw new Exception("BOM-only export must not show a count mismatch."));
+                if (_report.Text.Contains("[FAILED]") || !_report.Text.Contains("[GENERATED] BOM")
+                    || _report.Text.Contains("[GENERATED] IPC-D-356 netlist"))
+                    throw new Exception("BOM-only export failed: " + _report.Text);
+                _generateIpcD356.Checked = true;
+                results.Add("PASS automatic BOM first, summed quantity, count mismatch notification, reference differences and no comparison with stale placement files");
+                results.Add("PASS separate read-only BOM/database and schematics/layout identifier check headers after real BOM export");
                 _deleteBeforeGeneration.Checked = _generateGerbers.Checked = _generatePlacements.Checked = _generateDrills.Checked = true;
                 results.Add("PASS right-aligned checkboxes and real CLI IPC-D-356 export to manufacturing, including IPC-only selection");
             }
@@ -781,7 +943,8 @@ public sealed class MainForm : Form
             await RefreshAsync(manual: true);
             var savedSettings = UserSettings.Load(_paths.SettingsFile);
             if (_project.Text != savedSettings.ProjectDirectory || _revision.Text.Trim() != savedSettings.Revision)
-                throw new Exception("Refresh changed entries or settings were not saved.");
+                throw new Exception($"Refresh changed entries or settings were not saved. Project: '{_project.Text}' / '{savedSettings.ProjectDirectory}'; " +
+                    $"revision: '{_revision.Text.Trim()}' / '{savedSettings.Revision}'; load: {savedSettings.LoadError}; status: {_jobStatus.Text}");
             results.Add("PASS generation preflight, saved paths and revision, and refresh preserving entries");
             _cli.Text = DetectCli(); _project.Text = "";
             ShowReadyReport();

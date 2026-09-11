@@ -105,7 +105,7 @@ public static class EditTabMetadataCheckTests
             await File.WriteAllTextAsync(project, json);
             var before = await File.ReadAllBytesAsync(project);
             var report = await new ConfigurationCheckRunner().RunAsync(new("", directory));
-            Assert.Equal(6, report.Entries.Count);
+            Assert.Equal(8, report.Entries.Count);
             Assert.Equal("Symbol Fields Table", report.Entries[0].Name);
             Assert.Equal(CheckStatus.Failed, report.Entries[0].Status);
             Assert.Equal("Edit Tab metadata", report.Entries[1].Name);
