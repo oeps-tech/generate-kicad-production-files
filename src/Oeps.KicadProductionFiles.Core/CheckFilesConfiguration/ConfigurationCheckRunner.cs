@@ -9,7 +9,8 @@ public sealed class ConfigurationCheckRunner
 
     public ConfigurationCheckRunner(IEnumerable<IFileCheck>? checks = null) => _runner = new(checks ?? [
         new SymbolFieldsTableCheck(), new EditTabMetadataCheck(), new ExportConfigurationCheck(), new FieldOrderCheck(),
-        new RevisionCheck(), new PcbSilkscreenRevisionCheck(), new GerberPlotSettingsCheck(), new SchematicBomIdentifiersCheck()
+        new RevisionCheck(), new PcbSilkscreenRevisionCheck(), new GerberPlotSettingsCheck(), new SchematicBomIdentifiersCheck(),
+        new SchematicBomDuplicatesCheck()
     ]);
 
     public async Task<CheckReport> RunAsync(CheckContext context, CancellationToken cancellationToken = default)

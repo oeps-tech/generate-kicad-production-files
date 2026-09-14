@@ -12,6 +12,61 @@ public static class SchematicBomIdentifiersCheckTests
     private const string Header = "Reference,OEPS PN,OEPSPN,MPN,OEPS Description\n";
 
     [Test]
+    public static async Task DuplicateCheckUsesSavedGroupingAndReportsBothIdentifiers()
+    {
+        using var fixture = new Fixture();
+        var csv = Header + "C1,001,,CAP-1,Capacitor\nC2,,001,CAP-2,Capacitor\nC3,003,,CAP-1,Capacitor\n";
+        var original = new FakeCli(csv);
+        var duplicate = new FakeCli(csv);
+        await new SchematicBomIdentifiersCheck(original).RunAsync(fixture.Context);
+        var result = await new SchematicBomDuplicatesCheck(duplicate).RunAsync(fixture.Context);
+        Assert.Equal(CheckStatus.Failed, result.Status);
+        Assert.Equal("Duplicate OEPS PN '001' - 2 BOM rows:\nRow 1: C1\nRow 2: C2\n\n" +
+            "Duplicate MPN 'CAP-1' - 2 BOM rows:\nRow 1: C1\nRow 2: C3", result.Detail);
+        Assert.Equal("", original.Option("--group-by"));
+        var table = await SymbolFieldsTableReader.ReadAsync(fixture.Directory);
+        Assert.Equal(string.Join(',', table.Fields.Where(field => field.Grouped).Select(field => field.Name)), duplicate.Option("--group-by"));
+        Assert.True(table.Fields.Where(field => field.Grouped).All(field => duplicate.Option("--fields").Split(',').Contains(field.Name)));
+        Assert.False(System.IO.Directory.Exists(Path.GetDirectoryName(duplicate.Output)));
+    }
+
+    [Test]
+    public static async Task GroupedReferencesAreOneRowButSeparateRowsStillFail()
+    {
+        using var fixture = new Fixture();
+        var csv = Header + "\"C1,C2,C3\",001,,CAP-1,Capacitor\n";
+        var result = await new SchematicBomDuplicatesCheck(new FakeCli(csv)).RunAsync(fixture.Context);
+        Assert.Equal(CheckStatus.Passed, result.Status);
+        result = await new SchematicBomDuplicatesCheck(new FakeCli(csv + "C4,001,,CAP-1,Other\n")).RunAsync(fixture.Context);
+        Assert.Equal(CheckStatus.Failed, result.Status);
+        Assert.True(result.Detail.Contains("2 BOM rows:\nRow 1: C1,C2,C3\nRow 2: C4"), result.Detail);
+    }
+
+    [Test]
+    public static async Task DisabledGroupingDoesNotSilentlyCheckUngroupedRows()
+    {
+        using var fixture = new Fixture();
+        var project = JsonNode.Parse(await File.ReadAllTextAsync(fixture.Project))!;
+        project["schematic"]!["bom_settings"]!["group_symbols"] = false;
+        await File.WriteAllTextAsync(fixture.Project, project.ToJsonString());
+        var cli = new FakeCli(Header);
+        var result = await new SchematicBomDuplicatesCheck(cli).RunAsync(fixture.Context);
+        Assert.Equal(CheckStatus.Failed, result.Status);
+        Assert.True(result.Detail.Contains("Enable Group symbols"));
+        Assert.Equal(0, cli.Calls);
+    }
+
+    [Test]
+    public static async Task DuplicateCheckIgnoresEmptyValuesAndUsesExactIdentifiers()
+    {
+        using var fixture = new Fixture();
+        var result = await new SchematicBomDuplicatesCheck(new FakeCli(Header +
+            "C1,001,,CAP-1,\nC2,01,,cap-1,\nC3,,,,\nC4,,,,\n")).RunAsync(fixture.Context);
+        Assert.Equal(CheckStatus.Passed, result.Status);
+        Assert.Equal("", result.Detail);
+    }
+
+    [Test]
     public static async Task ExplicitColumnsAndDefaultBomScopeIgnoreBrokenTableConfiguration()
     {
         using var fixture = new Fixture();
@@ -217,9 +272,11 @@ public static class SchematicBomIdentifiersCheckTests
         var context = fixture.Context with { KicadCliPath = "" };
         var original = Snapshot(fixture.Directory);
         var result = await new ConfigurationFixRunner().RunAsync(context, (_, _) => throw new Exception("No fix should be offered."));
-        Assert.Equal(8, result.Checks.Entries.Count);
-        Assert.Equal(1, result.Checks.Entries.Count(entry => entry.Status == CheckStatus.Failed));
-        Assert.Equal(new SchematicBomIdentifiersCheck().Name, result.Checks.Entries.Single(entry => entry.Status == CheckStatus.Failed).Name);
+        Assert.Equal(9, result.Checks.Entries.Count);
+        Assert.Equal("Schematic BOM duplicate OEPS PN / MPN", result.Checks.Entries[^1].Name);
+        Assert.Equal(2, result.Checks.Entries.Count(entry => entry.Status == CheckStatus.Failed));
+        Assert.True(result.Checks.Entries.Where(entry => entry.Status == CheckStatus.Failed)
+            .All(entry => entry.Name == new SchematicBomIdentifiersCheck().Name || entry.Name == new SchematicBomDuplicatesCheck().Name));
         Assert.False(result.Actions.Any(action => action.Status == FixActionStatus.Fixed));
         Assert.Equal(original, Snapshot(fixture.Directory));
     }
@@ -249,7 +306,19 @@ public static class SchematicBomIdentifiersCheckTests
             Calls++;
             Arguments = arguments.ToArray();
             Assert.True(Arguments.Take(3).SequenceEqual(new[] { "sch", "export", "bom" }));
-            if (csv is not null) await File.WriteAllTextAsync(Output, csv, cancellationToken);
+            if (csv is not null)
+            {
+                var exported = csv;
+                var extra = Option("--fields").Split(',').Skip(5).ToArray();
+                if (extra.Length > 0 && csv.StartsWith(Header, StringComparison.Ordinal))
+                {
+                    var lines = csv.TrimEnd('\n').Split('\n');
+                    lines[0] += "," + string.Join(',', extra);
+                    for (var i = 1; i < lines.Length; i++) lines[i] += new string(',', extra.Length);
+                    exported = string.Join('\n', lines) + "\n";
+                }
+                await File.WriteAllTextAsync(Output, exported, cancellationToken);
+            }
             OnExport?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
             return new(ExitCode, "", ExitCode == 0 ? "" : "Unsupported export option");

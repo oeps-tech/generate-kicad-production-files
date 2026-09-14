@@ -21,7 +21,7 @@ jobs:
       - name: Set version
         shell: pwsh
         run: |
-          $version = '0.1.1'
+          $version = '0.1.2'
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             $version = $env:GITHUB_REF_NAME -replace '^v', ''
             if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Only stable semantic-version tags can be released.' }

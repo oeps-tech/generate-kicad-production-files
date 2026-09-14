@@ -212,9 +212,20 @@ public sealed class MainForm : Form
         var reportFrame = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2,
             BackColor = Color.White, Padding = new Padding(12), Margin = Padding.Empty, TabIndex = 3 };
         reportFrame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        reportFrame.RowStyles.Add(new RowStyle(SizeType.Absolute, 23)); reportFrame.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        reportFrame.RowStyles.Add(new RowStyle(SizeType.AutoSize)); reportFrame.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         DrawBorder(reportFrame);
-        reportFrame.Controls.Add(new Label { Text = "Report", Dock = DockStyle.Fill, Font = new Font(Font, FontStyle.Bold), Margin = Padding.Empty }, 0, 0);
+        var reportHeader = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2,
+            RowCount = 1, Margin = new Padding(0, 0, 0, 8) };
+        reportHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        reportHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        reportHeader.Controls.Add(new Label { Text = "Report", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+            Font = new Font(Font, FontStyle.Bold), Margin = Padding.Empty }, 0, 0);
+        var descriptions = new Button { Text = "Test &descriptions", AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlatStyle = FlatStyle.Flat, BackColor = Color.White, ForeColor = Color.FromArgb(0, 103, 192),
+            Padding = new Padding(6, 2, 6, 2), Margin = Padding.Empty };
+        descriptions.Click += (_, _) => { using var dialog = new TestDescriptionsDialog(this); dialog.ShowDialog(this); };
+        reportHeader.Controls.Add(descriptions, 1, 0);
+        reportFrame.Controls.Add(reportHeader, 0, 0);
         reportFrame.Controls.Add(_report, 0, 1); layout.Controls.Add(reportFrame, 0, 5);
         var footer = new TableLayoutPanel { Dock = DockStyle.Bottom, Height = 35, ColumnCount = 4,
             Padding = new Padding(16, 0, 12, 0), BackColor = Color.FromArgb(240, 244, 248), Font = new Font(Font.FontFamily, 8.5f) };

@@ -272,8 +272,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1
 
 The script builds the solution, runs the console verification suite, and writes these files under `artifacts/`. Existing versioned artifacts are protected from accidental replacement.
 
-- `Oeps.KicadProductionFiles-0.1.1-setup-win-x64.msi` and `.msi.sha256`: Windows installer with a private .NET 10 runtime.
-- `Oeps.KicadProductionFiles-0.1.1-win-x64.zip` and `.zip.sha256`: small application package used by the updater.
+- `Oeps.KicadProductionFiles-0.1.2-setup-win-x64.msi` and `.msi.sha256`: Windows installer with a private .NET 10 runtime.
+- `Oeps.KicadProductionFiles-0.1.2-win-x64.zip` and `.zip.sha256`: small application package used by the updater.
 
 Double-click the MSI to install for the current Windows user. It registers in Windows Installed apps and creates desktop and Start-menu shortcuts that open `Oeps.KicadProductionFiles.Launcher.exe` directly. Installation and normal startup do not run PowerShell or download a runtime; no SDK is needed on the target PC. PowerShell is only used for source development and CI packaging. `scripts/Build-Msi.ps1` installs the pinned WiX 4.0.6 build tool into `.tools/wix` on first use and bundles only the .NET host, Core runtime and Desktop runtime from the build SDK, excluding SDKs and ASP.NET.
 
